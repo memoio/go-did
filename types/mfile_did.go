@@ -38,8 +38,8 @@ func ParseMfileDID(didString string) (*MfileDID, error) {
 		return nil, xerrors.Errorf("unspport method %s", parts[1])
 	}
 
-	if len(parts) == 4 {
-
+	if len(parts) >= 4 {
+		return nil, xerrors.Errorf("unsupported did format")
 	} else {
 		if _, err := cid.Decode(parts[len(parts)-1]); err != nil {
 			return nil, xerrors.Errorf("%s is not cid", parts[2])

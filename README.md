@@ -414,9 +414,13 @@ func main() {
 
 ## 与Mfile DID合约进行交互
 
+在go-did中，提供了`MfileDIDController`类，用于控制合约中保存的Mfile DID文档，从而实现对Mfile DID权限的控制。目前支持如下链：
+
+- dev：https://devchain.metamemo.one:8501
+
 ### 创建DID
 
-可以创建Mfile DID，从而控制
+创建一个全新的Mfile DID。
 
 ```go
 package main
