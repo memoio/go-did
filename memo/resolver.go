@@ -207,12 +207,19 @@ func QueryAllAuthtication(accountIns *proxy.IAccountDid, did types.MemoDID) ([]t
 	}
 	defer authIter.Close()
 
-	var authentications []types.MemoDIDUrl
-	var keys []types.PublicKey
+	verifyMethod, _ := accountIns.GetVeri(&bind.CallOpts{}, did.Identifier, big.NewInt(0))
+	var masterID, _ = did.DIDUrl(0)
+	var masterKey = types.PublicKey{
+		Type:         verifyMethod.MethodType,
+		PublicKeyHex: hexutil.Encode(verifyMethod.PubKeyData),
+	}
+
+	var authentications []types.MemoDIDUrl = []types.MemoDIDUrl{masterID}
+	var keys []types.PublicKey = []types.PublicKey{masterKey}
 	for authIter.Next() {
-		// if hex.EncodeToString(authIter.Event.Did[:]) != did.Identifier {
-		// 	return nil, xerrors.Errorf("Got wrong did when query authentication")
-		// }
+		if authIter.Event.Id == masterID.String() {
+			continue
+		}
 
 		// parse method id
 		didUrl, err := types.ParseMemoDIDUrl(authIter.Event.Id)
@@ -225,7 +232,7 @@ func QueryAllAuthtication(accountIns *proxy.IAccountDid, did types.MemoDID) ([]t
 		if err != nil {
 			return nil, nil, err
 		}
-		verificationMethod, err := accountIns.GetVeri(&bind.CallOpts{}, didUrl.DID().Identifier, big.NewInt(int64(didUrl.GetMethodIndex())))
+		verificationMethod, err := accountIns.GetVeri(&bind.CallOpts{}, didUrl.Identifier, big.NewInt(int64(didUrl.GetMethodIndex())))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -241,47 +248,6 @@ func QueryAllAuthtication(accountIns *proxy.IAccountDid, did types.MemoDID) ([]t
 	return authentications, keys, nil
 }
 
-// func QueryAuthtications(accountIns *proxy.IAccountDid, opt *bind.FilterOpts) ([]types.MemoDIDUrl, []types.PublicKey, error) {
-// 	authIter, err := accountIns.FilterAddAuth(opt, nil)
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
-// 	defer authIter.Close()
-
-// 	var authentications []types.MemoDIDUrl
-// 	var keys []types.PublicKey
-// 	for authIter.Next() {
-// 		// if hex.EncodeToString(authIter.Event.Did[:]) != did.Identifier {
-// 		// 	return nil, xerrors.Errorf("Got wrong did when query authentication")
-// 		// }
-
-// 		// parse method id
-// 		didUrl, err := types.ParseMemoDIDUrl(authIter.Event.Id)
-// 		if err != nil {
-// 			return nil, nil, err
-// 		}
-
-// 		// check method id is activated or not
-// 		activated, err := accountIns.InAuth(&bind.CallOpts{}, did.Identifier, didUrl.String())
-// 		if err != nil {
-// 			return nil, nil, err
-// 		}
-// 		verificationMethod, err := accountIns.GetVeri(&bind.CallOpts{}, didUrl.DID().Identifier, big.NewInt(int64(didUrl.GetMethodIndex())))
-// 		if err != nil {
-// 			return nil, nil, err
-// 		}
-// 		if activated && !verificationMethod.Deactivated {
-// 			authentications = append(authentications, *didUrl)
-// 			keys = append(keys, types.PublicKey{
-// 				Type:         verificationMethod.MethodType,
-// 				PublicKeyHex: hex.EncodeToString(verificationMethod.PubKeyData),
-// 			})
-// 		}
-// 	}
-
-// 	return authentications, keys, nil
-// }
-
 func QueryAllAssertion(accountIns *proxy.IAccountDid, did types.MemoDID) ([]types.MemoDIDUrl, []types.PublicKey, error) {
 	assertionIter, err := accountIns.FilterAddAssertion(&bind.FilterOpts{}, []string{did.Identifier})
 	if err != nil {
@@ -292,10 +258,6 @@ func QueryAllAssertion(accountIns *proxy.IAccountDid, did types.MemoDID) ([]type
 	var assertions []types.MemoDIDUrl
 	var keys []types.PublicKey
 	for assertionIter.Next() {
-		// if hex.EncodeToString(assertionIter.Event.Did[:]) != did.Identifier {
-		// 	return nil, xerrors.Errorf("Got wrong did when query assertion")
-		// }
-
 		// parse method id
 		didUrl, err := types.ParseMemoDIDUrl(assertionIter.Event.Id)
 		if err != nil {
@@ -333,10 +295,6 @@ func QueryAllDelagation(accountIns *proxy.IAccountDid, did types.MemoDID) ([]typ
 	var delegations []types.MemoDIDUrl
 	var keys []types.PublicKey
 	for delegationIter.Next() {
-		// if hex.EncodeToString(delegationIter.Event.Did[:]) != did.Identifier {
-		// 	return nil, xerrors.Errorf("Got wrong did when query delegation")
-		// }
-
 		// parse method id
 		didUrl, err := types.ParseMemoDIDUrl(delegationIter.Event.Id)
 		if err != nil {
@@ -374,10 +332,6 @@ func QueryAllRecovery(accountIns *proxy.IAccountDid, did types.MemoDID) ([]types
 	var recovery []types.MemoDIDUrl
 	var keys []types.PublicKey
 	for recoveryIter.Next() {
-		// if hex.EncodeToString(recoveryIter.Event.Did[:]) != did.Identifier {
-		// 	return nil, xerrors.Errorf("Got wrong did when query recovery")
-		// }
-
 		// parse method id
 		didUrl, err := types.ParseMemoDIDUrl(recoveryIter.Event.Recovery)
 		if err != nil {

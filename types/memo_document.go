@@ -71,6 +71,25 @@ func ToSolidityData(method *VerificationMethod) (*proxy.IAccountDidPublicKey, er
 	}, nil
 }
 
+func (v PublicKey) VerifySignature(sig []byte, message ...[]byte) (bool, error) {
+	switch v.Type {
+	case "EcdsaSecp256k1VerificationKey2019":
+		hash := crypto.Keccak256(message...)
+
+		pubKey, err := crypto.SigToPub(hash, sig)
+		if err != nil {
+			return false, err
+		}
+
+		if v.PublicKeyHex != hexutil.Encode(crypto.CompressPubkey(pubKey)) {
+			return false, nil
+		}
+	default:
+		return false, errors.New("unsupport type")
+	}
+	return true, nil
+}
+
 func PublicKeyToAddress(pk PublicKey) (common.Address, error) {
 	var address common.Address
 	switch pk.Type {
@@ -89,7 +108,3 @@ func PublicKeyToAddress(pk PublicKey) (common.Address, error) {
 	}
 	return address, nil
 }
-
-// func (v VerificationMethod) MarshalJSON() ([]byte, error) {
-// 	return json.Marshal(v)
-// }
