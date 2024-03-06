@@ -3,15 +3,13 @@ package proof
 import (
 	"context"
 	"crypto/ecdsa"
+	"fmt"
 	"math/big"
-	"strings"
 	"time"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/kzg"
-	"github.com/ethereum/go-ethereum"
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -19,6 +17,7 @@ import (
 	"golang.org/x/xerrors"
 
 	com "github.com/memoio/contractsv2/common"
+	"github.com/memoio/contractsv2/go_contracts/auth"
 	inst "github.com/memoio/contractsv2/go_contracts/instance"
 	proxyfileproof "github.com/memoio/did-solidity/go-contracts/proxy-proof"
 )
@@ -29,10 +28,12 @@ var (
 )
 
 type ProofInstance struct {
-	endpoint   string
-	transactor *bind.TransactOpts
-	proofAddr  common.Address
-	tokenAddr  common.Address
+	endpoint            string
+	transactor          *bind.TransactOpts
+	proofAddr           common.Address
+	proofControllerAddr common.Address
+	tokenAddr           common.Address
+	authAddr            common.Address
 }
 
 func NewProofInstance(privateKey *ecdsa.PrivateKey, chain string) (*ProofInstance, error) {
@@ -66,20 +67,34 @@ func NewProofInstance(privateKey *ecdsa.PrivateKey, chain string) (*ProofInstanc
 		return nil, err
 	}
 
+	// get proof controller address
+	proofControllerAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProofControl)
+	if err != nil {
+		return nil, err
+	}
+
+	// get auth address
+	authAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeAuth)
+	if err != nil {
+		return nil, err
+	}
+
 	// new auth
 	auth, err := bind.NewKeyedTransactorWithChainID(privateKey, chainID)
 	if err != nil {
 		return nil, err
 	}
-	auth.Value = big.NewInt(0)     // in wei
-	auth.GasLimit = uint64(300000) // in units
+	auth.Value = big.NewInt(0)      // in wei
+	auth.GasLimit = uint64(3000000) // in units
 	// auth.GasPrice = big.NewInt(1000)
 
 	return &ProofInstance{
-		endpoint:   endpoint,
-		transactor: auth,
-		proofAddr:  proofAddr,
-		tokenAddr:  tokenAddr,
+		endpoint:            endpoint,
+		transactor:          auth,
+		proofAddr:           proofAddr,
+		proofControllerAddr: proofControllerAddr,
+		tokenAddr:           tokenAddr,
+		authAddr:            authAddr,
 	}, nil
 }
 
@@ -251,37 +266,85 @@ func (ins *ProofInstance) WithdrawMissedProfit() error {
 	return CheckTx(ins.endpoint, tx.Hash(), "WithdrawMissedProfit")
 }
 
-func (ins *ProofInstance) GetFirstTime() (uint64, error) {
+func (ins *ProofInstance) AlterSetting(setting SettingInfo, vk bls12381.G2Affine, sks [5]string) error {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer client.Close()
 
-	contractAbi, err := abi.JSON(strings.NewReader(proxyfileproof.ProxyProofABI))
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
-	events, err := client.FilterLogs(context.TODO(), ethereum.FilterQuery{
-		FromBlock: nil,
-		Addresses: []common.Address{com.InstanceAddr},
-		Topics:    [][]common.Hash{{contractAbi.Events["AddFile"].ID}},
-	})
+	authIns, err := auth.NewAuth(ins.authAddr, client)
 	if err != nil {
-		return 0, err
-	}
-	if len(events) == 0 {
-		return 0, nil
+		return err
 	}
 
-	header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(events[0].BlockNumber)))
+	nonce, err := authIns.Nonce(&bind.CallOpts{})
 	if err != nil {
-		return 0, err
+		return err
+	}
+	fmt.Println(nonce)
+
+	hash := GetAlterSettingInfoHash(ins.proofControllerAddr, ins.authAddr, setting, vk, nonce)
+	signs := com.GetSigns(hash, sks)
+
+	info := proxyfileproof.IFileProofSettingInfo{
+		Interval:        setting.Interval,
+		Period:          setting.Period,
+		ChalSum:         setting.ChalSum,
+		RespondTime:     setting.RespondTime,
+		Price:           setting.Price,
+		Submitter:       setting.Submitter,
+		Receiver:        setting.Receiver,
+		Foundation:      setting.Foundation,
+		ChalRewardRatio: setting.ChalRewardRatio,
+		ChalPledge:      setting.ChalPledge,
+		Vk:              ToSolidityG2(vk),
 	}
 
-	return header.Time, nil
+	tx, err := proofIns.AlterSetting(ins.transactor, info, signs)
+	if err != nil {
+		return err
+	}
+
+	return CheckTx(ins.endpoint, tx.Hash(), "AlterSetting")
 }
+
+// func (ins *ProofInstance) GetFirstTime() (uint64, error) {
+// 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+// 	if err != nil {
+// 		return 0, err
+// 	}
+// 	defer client.Close()
+
+// 	contractAbi, err := abi.JSON(strings.NewReader(proxyfileproof.ProxyProofABI))
+// 	if err != nil {
+// 		return 0, err
+// 	}
+
+// 	events, err := client.FilterLogs(context.TODO(), ethereum.FilterQuery{
+// 		FromBlock: nil,
+// 		Addresses: []common.Address{com.InstanceAddr},
+// 		Topics:    [][]common.Hash{{contractAbi.Events["AddFile"].ID}},
+// 	})
+// 	if err != nil {
+// 		return 0, err
+// 	}
+// 	if len(events) == 0 {
+// 		return 0, nil
+// 	}
+
+// 	header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(events[0].BlockNumber)))
+// 	if err != nil {
+// 		return 0, err
+// 	}
+
+// 	return header.Time, nil
+// }
 
 func (ins *ProofInstance) GetVerifyInfo() (fr.Element, *big.Int, error) {
 	rnd := fr.Element{}
@@ -301,20 +364,24 @@ func (ins *ProofInstance) GetVerifyInfo() (fr.Element, *big.Int, error) {
 	return *rnd.SetBytes(res.Rnd[:]), res.Last, err
 }
 
-func (ins *ProofInstance) GetChallengeInfo() (struct {
-	ChalStatus uint8
-	Challenger common.Address
-	ChalIndex  uint8
-	StartIndex *big.Int
-	ChalLength *big.Int
-}, error) {
-	info := struct {
-		ChalStatus uint8
-		Challenger common.Address
-		ChalIndex  uint8
-		StartIndex *big.Int
-		ChalLength *big.Int
-	}{}
+func (ins *ProofInstance) GetProfitInfo() (ProfitInfo, error) {
+	var info ProfitInfo
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return info, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	if err != nil {
+		return info, err
+	}
+
+	return proofIns.GetProfitInfo(&bind.CallOpts{})
+}
+
+func (ins *ProofInstance) GetChallengeInfo() (ChallengeInfo, error) {
+	var info ChallengeInfo
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return info, err
@@ -327,6 +394,23 @@ func (ins *ProofInstance) GetChallengeInfo() (struct {
 	}
 
 	return proofIns.GetChallengeInfo(&bind.CallOpts{})
+}
+
+func (ins *ProofInstance) GetSettingInfo() (SettingInfo, error) {
+	var info SettingInfo
+
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return info, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	if err != nil {
+		return info, err
+	}
+
+	return proofIns.GetSettingInfo(&bind.CallOpts{})
 }
 
 // CheckTx check whether transaction is successful through receipt
