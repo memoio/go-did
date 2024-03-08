@@ -18,6 +18,7 @@ import (
 
 	com "github.com/memoio/contractsv2/common"
 	"github.com/memoio/contractsv2/go_contracts/auth"
+	"github.com/memoio/contractsv2/go_contracts/erc"
 	inst "github.com/memoio/contractsv2/go_contracts/instance"
 	proxyfileproof "github.com/memoio/did-solidity/go-contracts/proxy-proof"
 )
@@ -31,6 +32,7 @@ type ProofInstance struct {
 	endpoint            string
 	transactor          *bind.TransactOpts
 	proofAddr           common.Address
+	proofProxyAddr      common.Address
 	proofControllerAddr common.Address
 	tokenAddr           common.Address
 	authAddr            common.Address
@@ -56,7 +58,13 @@ func NewProofInstance(privateKey *ecdsa.PrivateKey, chain string) (*ProofInstanc
 	}
 
 	// get proof address
-	proofAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProofProxy)
+	proofAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProof)
+	if err != nil {
+		return nil, err
+	}
+
+	// get proof proxy address
+	proofProxyAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProofProxy)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +100,7 @@ func NewProofInstance(privateKey *ecdsa.PrivateKey, chain string) (*ProofInstanc
 		endpoint:            endpoint,
 		transactor:          auth,
 		proofAddr:           proofAddr,
+		proofProxyAddr:      proofProxyAddr,
 		proofControllerAddr: proofControllerAddr,
 		tokenAddr:           tokenAddr,
 		authAddr:            authAddr,
@@ -105,12 +114,34 @@ func (ins *ProofInstance) AddFile(commit bls12381.G1Affine, size uint64, start *
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return err
 	}
 
-	tx, err := proofIns.AddFile(ins.transactor, ToSolidityG1(commit), size, start, end, credential)
+	erc20Ins, err := erc.NewERC20(ins.tokenAddr, client)
+	if err != nil {
+		return err
+	}
+
+	setting, err := ins.GetSettingInfo()
+	if err != nil {
+		return err
+	}
+
+	amount := big.NewInt(int64(setting.Price))
+	amount = amount.Mul(big.NewInt(int64(size)), amount)
+	amount = amount.Mul(amount, start.Sub(start, end))
+	tx, err := erc20Ins.Approve(ins.transactor, ins.proofAddr, amount)
+	if err != nil {
+		return err
+	}
+	err = CheckTx(ins.endpoint, tx.Hash(), "Approve")
+	if err != nil {
+		return err
+	}
+
+	tx, err = proofIns.AddFile(ins.transactor, ToSolidityG1(commit), size, start, end, credential)
 	if err != nil {
 		return err
 	}
@@ -125,7 +156,7 @@ func (ins *ProofInstance) GenerateRnd() error {
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return err
 	}
@@ -145,7 +176,7 @@ func (ins *ProofInstance) SubmitAggregationProof(randomPoint fr.Element, commit 
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return err
 	}
@@ -165,12 +196,31 @@ func (ins *ProofInstance) Challenge(challengeIndex uint8) error {
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return err
 	}
 
-	tx, err := proofIns.DoChallenge(ins.transactor, challengeIndex)
+	erc20Ins, err := erc.NewERC20(ins.tokenAddr, client)
+	if err != nil {
+		return err
+	}
+
+	setting, err := ins.GetSettingInfo()
+	if err != nil {
+		return err
+	}
+
+	tx, err := erc20Ins.Approve(ins.transactor, ins.proofAddr, setting.ChalPledge)
+	if err != nil {
+		return err
+	}
+	err = CheckTx(ins.endpoint, tx.Hash(), "Approve")
+	if err != nil {
+		return err
+	}
+
+	tx, err = proofIns.DoChallenge(ins.transactor, challengeIndex)
 	if err != nil {
 		return err
 	}
@@ -185,7 +235,7 @@ func (ins *ProofInstance) ResponseChallenge(commits [10]bls12381.G1Affine) error
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return err
 	}
@@ -209,7 +259,7 @@ func (ins *ProofInstance) OneStepProve(commits []bls12381.G1Affine) error {
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return err
 	}
@@ -233,7 +283,7 @@ func (ins *ProofInstance) EndChallenge() error {
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return err
 	}
@@ -253,7 +303,7 @@ func (ins *ProofInstance) WithdrawMissedProfit() error {
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return err
 	}
@@ -273,7 +323,7 @@ func (ins *ProofInstance) AlterSetting(setting SettingInfo, vk bls12381.G2Affine
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return err
 	}
@@ -354,7 +404,7 @@ func (ins *ProofInstance) GetVerifyInfo() (fr.Element, *big.Int, error) {
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return rnd, nil, err
 	}
@@ -372,7 +422,7 @@ func (ins *ProofInstance) GetProfitInfo() (ProfitInfo, error) {
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return info, err
 	}
@@ -388,7 +438,7 @@ func (ins *ProofInstance) GetChallengeInfo() (ChallengeInfo, error) {
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return info, err
 	}
@@ -398,19 +448,34 @@ func (ins *ProofInstance) GetChallengeInfo() (ChallengeInfo, error) {
 
 func (ins *ProofInstance) GetSettingInfo() (SettingInfo, error) {
 	var info SettingInfo
-
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return info, err
 	}
 	defer client.Close()
 
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofAddr, client)
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
 		return info, err
 	}
 
 	return proofIns.GetSettingInfo(&bind.CallOpts{})
+}
+
+func (ins *ProofInstance) GetVK() (bls12381.G2Affine, error) {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return bls12381.G2Affine{}, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return bls12381.G2Affine{}, err
+	}
+
+	vkSol, err := proofIns.GetVK(&bind.CallOpts{})
+	return FromSolidityG2(vkSol), err
 }
 
 // CheckTx check whether transaction is successful through receipt

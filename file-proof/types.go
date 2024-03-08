@@ -61,6 +61,14 @@ func ToSolidityG1(g1 bls12381.G1Affine) [4][32]byte {
 	return res
 }
 
+func FromSolidityG1(g1 [4][32]byte) bls12381.G1Affine {
+	var res bls12381.G1Affine
+	res.X.SetBytes(append(g1[0][:], g1[1][:]...))
+	res.Y.SetBytes(append(g1[2][:], g1[3][:]...))
+
+	return res
+}
+
 func ToAppendedBytesG1(g1 bls12381.G1Affine) []byte {
 	res := make([]byte, 128)
 	elementx := g1.X.Bytes()
@@ -87,6 +95,16 @@ func ToSolidityG2(g2 bls12381.G2Affine) [8][32]byte {
 	copy(res[5][:], elementy1[16:])
 	copy(res[6][16:], elementy2[:16])
 	copy(res[7][:], elementy2[16:])
+
+	return res
+}
+
+func FromSolidityG2(g2 [8][32]byte) bls12381.G2Affine {
+	var res bls12381.G2Affine
+	res.X.A0.SetBytes(append(g2[0][:], g2[1][:]...))
+	res.X.A1.SetBytes(append(g2[2][:], g2[3][:]...))
+	res.Y.A0.SetBytes(append(g2[4][:], g2[5][:]...))
+	res.Y.A1.SetBytes(append(g2[6][:], g2[7][:]...))
 
 	return res
 }
