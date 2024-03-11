@@ -1,18 +1,21 @@
 package proof
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"log"
 	"math/big"
 
+	"github.com/cockroachdb/errors"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/kzg"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	com "github.com/memoio/contractsv2/common"
-	inst "github.com/memoio/contractsv2/go_contracts/instance"
 	proxyfileproof "github.com/memoio/did-solidity/go-contracts/proxy-proof"
 )
 
@@ -134,7 +137,7 @@ func ToSolidityProof(proof kzg.OpeningProof) proxyfileproof.IFileProofProofInfo 
 	}
 }
 
-func GetAlterSettingInfoHash(instanceAddr, authAddr common.Address, setting SettingInfo, vk bls12381.G2Affine, nonce *big.Int) []byte {
+func getAlterSettingInfoHash(instanceAddr, authAddr common.Address, setting SettingInfo, vk bls12381.G2Affine, nonce *big.Int) []byte {
 	interval := make([]byte, 4)
 	period := make([]byte, 4)
 	challengeSum := make([]byte, 4)
@@ -169,114 +172,50 @@ func GetAlterSettingInfoHash(instanceAddr, authAddr common.Address, setting Sett
 	return hash
 }
 
-func GetCredentialHash(chain string, userAddr common.Address, commit bls12381.G1Affine, size uint64, start *big.Int, end *big.Int) ([]byte, error) {
-	instanceAddr, endpoint := com.GetInsEndPointByChain(chain)
-
-	client, err := ethclient.DialContext(context.TODO(), endpoint)
-	if err != nil {
-		return nil, err
-	}
-
-	// new instance
-	instanceIns, err := inst.NewInstance(instanceAddr, client)
-	if err != nil {
-		return nil, err
-	}
-
-	proofAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProof)
-	if err != nil {
-		return nil, err
-	}
-
+func getCredentialHash(proofAddr common.Address, userAddr common.Address, commit bls12381.G1Affine, size uint64, start *big.Int, end *big.Int) []byte {
 	sizeByte := make([]byte, 8)
 	binary.BigEndian.PutUint64(sizeByte, size)
 	startByte := common.LeftPadBytes(start.Bytes(), 32)
 	endByte := common.LeftPadBytes(end.Bytes(), 32)
-	hash := crypto.Keccak256(proofAddr.Bytes(), userAddr.Bytes(), ToAppendedBytesG1(commit), sizeByte, startByte, endByte)
-	return hash, nil
+	return crypto.Keccak256(proofAddr.Bytes(), userAddr.Bytes(), ToAppendedBytesG1(commit), sizeByte, startByte, endByte)
 }
 
-// func GetHashByArguments(instanceAddr, authAddr common.Address, setting SettingInfo, vk bls12381.G2Affine, nonce *big.Int) []byte {
-// 	addressT, _ := abi.NewType("address", "", nil)
-// 	stringT, _ := abi.NewType("string", "", nil)
-// 	uint8T, _ := abi.NewType("uint8", "", nil)
-// 	uint32T, _ := abi.NewType("uint32", "", nil)
-// 	uint64T, _ := abi.NewType("uint64", "", nil)
-// 	uint256T, _ := abi.NewType("uint256", "", nil)
-// 	bytes32Arr8T, _ := abi.NewType("bytes32[8]", "", nil)
+// other code using the following...
+func getErrorReason(ctx context.Context, endpoint string, from common.Address, tx *types.Transaction) (string, error) {
+	client, err := ethclient.Dial(endpoint)
+	if err != nil {
+		return "", err
+	}
+	defer client.Close()
 
-// 	arguments := abi.Arguments{
-// 		// instance address
-// 		{
-// 			Type: addressT,
-// 		},
-// 		// string
-// 		{
-// 			Type: stringT,
-// 		},
-// 		// interval
-// 		{
-// 			Type: uint32T,
-// 		},
-// 		// period
-// 		{
-// 			Type: uint32T,
-// 		},
-// 		// challenge sum
-// 		{
-// 			Type: uint32T,
-// 		},
-// 		// respond time
-// 		{
-// 			Type: uint32T,
-// 		},
-// 		// price
-// 		{
-// 			Type: uint64T,
-// 		},
-// 		// submitter
-// 		{
-// 			Type: addressT,
-// 		},
-// 		// receiver
-// 		{
-// 			Type: addressT,
-// 		},
-// 		// foundation
-// 		{
-// 			Type: addressT,
-// 		},
-// 		// challenge reward ratio
-// 		{
-// 			Type: uint8T,
-// 		},
-// 		{
-// 			Type: uint256T,
-// 		},
-// 		{
-// 			Type: bytes32Arr8T,
-// 		},
-// 	}
+	msg := ethereum.CallMsg{
+		From:     from,
+		To:       tx.To(),
+		Gas:      tx.Gas(),
+		GasPrice: tx.GasPrice(),
+		Value:    tx.Value(),
+		Data:     tx.Data(),
+	}
+	res, err := client.CallContract(ctx, msg, nil)
+	if err != nil {
+		return "", err
+	}
+	return unpackError(res)
+}
 
-// 	data, err := arguments.Pack(
-// 		instanceAddr,
-// 		"alterFileProofSetting",
-// 		setting.Interval,
-// 		setting.Period,
-// 		setting.ChalSum,
-// 		setting.RespondTime,
-// 		setting.Price,
-// 		setting.Submitter,
-// 		setting.Receiver,
-// 		setting.Foundation,
-// 		setting.ChalRewardRatio,
-// 		setting.ChalPledge,
-// 		ToSolidityG2(vk))
-// 	if err != nil {
-// 		log.Println(err.Error())
-// 		return nil
-// 	}
-// 	log.Println(data)
+var (
+	errorSig     = []byte{0x08, 0xc3, 0x79, 0xa0} // Keccak256("Error(string)")[:4]
+	abiString, _ = abi.NewType("string", "", nil)
+)
 
-// 	return data
-// }
+func unpackError(result []byte) (string, error) {
+	log.Println(string(result))
+	if !bytes.Equal(result[:4], errorSig) {
+		return "<tx result not Error(string)>", errors.New("TX result not of type Error(string)")
+	}
+	vs, err := abi.Arguments{{Type: abiString}}.UnpackValues(result[4:])
+	if err != nil {
+		return "<invalid tx result>", errors.Wrap(err, "unpacking revert reason")
+	}
+	return vs[0].(string), nil
+}

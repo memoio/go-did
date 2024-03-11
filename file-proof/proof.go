@@ -3,7 +3,7 @@ package proof
 import (
 	"context"
 	"crypto/ecdsa"
-	"fmt"
+	"log"
 	"math/big"
 	"time"
 
@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"golang.org/x/xerrors"
 
@@ -129,24 +130,35 @@ func (ins *ProofInstance) AddFile(commit bls12381.G1Affine, size uint64, start *
 		return err
 	}
 
+	// check credential
+	hash := ins.GetCredentialHash2(ToSolidityG1(commit), size, start, end)
+	publicKey, err := crypto.SigToPub(hash, credential)
+	if err != nil {
+		return err
+	}
+	if crypto.PubkeyToAddress(*publicKey).Hex() != setting.Submitter.Hex() {
+		return xerrors.Errorf("credential is not right")
+	}
+
 	amount := big.NewInt(int64(setting.Price))
-	amount = amount.Mul(big.NewInt(int64(size)), amount)
-	amount = amount.Mul(amount, start.Sub(start, end))
+	amount.Mul(big.NewInt(int64(size)), amount)
+	amount.Mul(amount, new(big.Int).Sub(end, start))
 	tx, err := erc20Ins.Approve(ins.transactor, ins.proofAddr, amount)
 	if err != nil {
 		return err
 	}
-	err = CheckTx(ins.endpoint, tx.Hash(), "Approve")
+	err = CheckTx(ins.endpoint, ins.transactor.From, tx, "Approve")
 	if err != nil {
 		return err
 	}
 
+	log.Println(amount)
 	tx, err = proofIns.AddFile(ins.transactor, ToSolidityG1(commit), size, start, end, credential)
 	if err != nil {
 		return err
 	}
 
-	return CheckTx(ins.endpoint, tx.Hash(), "AddFile")
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "AddFile")
 }
 
 func (ins *ProofInstance) GenerateRnd() error {
@@ -166,7 +178,7 @@ func (ins *ProofInstance) GenerateRnd() error {
 		return err
 	}
 
-	return CheckTx(ins.endpoint, tx.Hash(), "GenerateRnd")
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "GenerateRnd")
 }
 
 func (ins *ProofInstance) SubmitAggregationProof(randomPoint fr.Element, commit bls12381.G1Affine, proof kzg.OpeningProof) error {
@@ -186,7 +198,7 @@ func (ins *ProofInstance) SubmitAggregationProof(randomPoint fr.Element, commit 
 		return err
 	}
 
-	return CheckTx(ins.endpoint, tx.Hash(), "SubmitAggregationProof")
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "SubmitAggregationProof")
 }
 
 func (ins *ProofInstance) Challenge(challengeIndex uint8) error {
@@ -215,7 +227,7 @@ func (ins *ProofInstance) Challenge(challengeIndex uint8) error {
 	if err != nil {
 		return err
 	}
-	err = CheckTx(ins.endpoint, tx.Hash(), "Approve")
+	err = CheckTx(ins.endpoint, ins.transactor.From, tx, "Approve")
 	if err != nil {
 		return err
 	}
@@ -225,7 +237,7 @@ func (ins *ProofInstance) Challenge(challengeIndex uint8) error {
 		return err
 	}
 
-	return CheckTx(ins.endpoint, tx.Hash(), "Challenge")
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "Challenge")
 }
 
 func (ins *ProofInstance) ResponseChallenge(commits [10]bls12381.G1Affine) error {
@@ -249,7 +261,7 @@ func (ins *ProofInstance) ResponseChallenge(commits [10]bls12381.G1Affine) error
 		return err
 	}
 
-	return CheckTx(ins.endpoint, tx.Hash(), "ResponseChallenge")
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "ResponseChallenge")
 }
 
 func (ins *ProofInstance) OneStepProve(commits []bls12381.G1Affine) error {
@@ -273,7 +285,7 @@ func (ins *ProofInstance) OneStepProve(commits []bls12381.G1Affine) error {
 		return err
 	}
 
-	return CheckTx(ins.endpoint, tx.Hash(), "OneStepProve")
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "OneStepProve")
 }
 
 func (ins *ProofInstance) EndChallenge() error {
@@ -293,7 +305,7 @@ func (ins *ProofInstance) EndChallenge() error {
 		return err
 	}
 
-	return CheckTx(ins.endpoint, tx.Hash(), "EndChallenge")
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "EndChallenge")
 }
 
 func (ins *ProofInstance) WithdrawMissedProfit() error {
@@ -313,10 +325,10 @@ func (ins *ProofInstance) WithdrawMissedProfit() error {
 		return err
 	}
 
-	return CheckTx(ins.endpoint, tx.Hash(), "WithdrawMissedProfit")
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "WithdrawMissedProfit")
 }
 
-func (ins *ProofInstance) AlterSetting(setting SettingInfo, vk bls12381.G2Affine, sks [5]string) error {
+func (ins *ProofInstance) AlterSetting(setting SettingInfo, vk bls12381.G2Affine, signs [5][]byte) error {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return err
@@ -327,20 +339,6 @@ func (ins *ProofInstance) AlterSetting(setting SettingInfo, vk bls12381.G2Affine
 	if err != nil {
 		return err
 	}
-
-	authIns, err := auth.NewAuth(ins.authAddr, client)
-	if err != nil {
-		return err
-	}
-
-	nonce, err := authIns.Nonce(&bind.CallOpts{})
-	if err != nil {
-		return err
-	}
-	fmt.Println(nonce)
-
-	hash := GetAlterSettingInfoHash(ins.proofControllerAddr, ins.authAddr, setting, vk, nonce)
-	signs := com.GetSigns(hash, sks)
 
 	info := proxyfileproof.IFileProofSettingInfo{
 		Interval:        setting.Interval,
@@ -361,40 +359,8 @@ func (ins *ProofInstance) AlterSetting(setting SettingInfo, vk bls12381.G2Affine
 		return err
 	}
 
-	return CheckTx(ins.endpoint, tx.Hash(), "AlterSetting")
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "AlterSetting")
 }
-
-// func (ins *ProofInstance) GetFirstTime() (uint64, error) {
-// 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
-// 	if err != nil {
-// 		return 0, err
-// 	}
-// 	defer client.Close()
-
-// 	contractAbi, err := abi.JSON(strings.NewReader(proxyfileproof.ProxyProofABI))
-// 	if err != nil {
-// 		return 0, err
-// 	}
-
-// 	events, err := client.FilterLogs(context.TODO(), ethereum.FilterQuery{
-// 		FromBlock: nil,
-// 		Addresses: []common.Address{com.InstanceAddr},
-// 		Topics:    [][]common.Hash{{contractAbi.Events["AddFile"].ID}},
-// 	})
-// 	if err != nil {
-// 		return 0, err
-// 	}
-// 	if len(events) == 0 {
-// 		return 0, nil
-// 	}
-
-// 	header, err := client.HeaderByNumber(context.Background(), big.NewInt(int64(events[0].BlockNumber)))
-// 	if err != nil {
-// 		return 0, err
-// 	}
-
-// 	return header.Time, nil
-// }
 
 func (ins *ProofInstance) GetVerifyInfo() (fr.Element, *big.Int, error) {
 	rnd := fr.Element{}
@@ -478,14 +444,42 @@ func (ins *ProofInstance) GetVK() (bls12381.G2Affine, error) {
 	return FromSolidityG2(vkSol), err
 }
 
+func (ins *ProofInstance) GetAlterSettingInfoHash(setting SettingInfo, vk bls12381.G2Affine) ([]byte, error) {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	authIns, err := auth.NewAuth(ins.authAddr, client)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce, err := authIns.Nonce(&bind.CallOpts{})
+	if err != nil {
+		return nil, err
+	}
+
+	return getAlterSettingInfoHash(ins.proofControllerAddr, ins.authAddr, setting, vk, nonce), nil
+}
+
+func (ins *ProofInstance) GetCredentialHash(commit bls12381.G1Affine, size uint64, start *big.Int, end *big.Int) []byte {
+	return getCredentialHash(ins.proofAddr, ins.transactor.From, commit, size, start, end)
+}
+
+func (ins *ProofInstance) GetCredentialHash2(commit [4][32]byte, size uint64, start *big.Int, end *big.Int) []byte {
+	return com.GetCredentialHash(ins.proofAddr, ins.transactor.From, commit, size, start, end)
+}
+
 // CheckTx check whether transaction is successful through receipt
-func CheckTx(endPoint string, txHash common.Hash, name string) error {
+func CheckTx(endPoint string, from common.Address, tx *types.Transaction, name string) error {
 	var receipt *types.Receipt
 
 	t := checkTxSleepTime
 	for i := 0; i < 10; i++ {
 		time.Sleep(time.Duration(t) * time.Second)
-		receipt = com.GetTransactionReceipt(endPoint, txHash)
+		receipt = com.GetTransactionReceipt(endPoint, tx.Hash())
 		if receipt != nil {
 			break
 		}
@@ -493,15 +487,19 @@ func CheckTx(endPoint string, txHash common.Hash, name string) error {
 	}
 
 	if receipt == nil {
-		return xerrors.Errorf("%s: cann't get transaction(%s) receipt, not packaged", name, txHash)
+		return xerrors.Errorf("%s: cann't get transaction(%s) receipt, not packaged", name, tx.Hash())
 	}
 
 	// 0 means fail
 	if receipt.Status == 0 {
 		if receipt.GasUsed != receipt.CumulativeGasUsed {
-			return xerrors.Errorf("%s: transaction(%s) exceed gas limit", name, txHash)
+			return xerrors.Errorf("%s: transaction(%s) exceed gas limit", name, tx.Hash())
 		}
-		return xerrors.Errorf("%s: transaction(%s) mined but execution failed, please check your tx input", name, txHash)
+		reason, err := getErrorReason(context.TODO(), endPoint, from, tx)
+		if err != nil {
+			return xerrors.Errorf("%s: transaction(%s) mined but execution failed: %s", name, tx.Hash(), err.Error())
+		}
+		return xerrors.Errorf("%s: transaction(%s) revert(%s)", name, tx.Hash(), reason)
 	}
 	return nil
 }
