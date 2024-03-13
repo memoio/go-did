@@ -3,7 +3,6 @@ package proof
 import (
 	"context"
 	"crypto/ecdsa"
-	"log"
 	"math/big"
 	"time"
 
@@ -152,7 +151,6 @@ func (ins *ProofInstance) AddFile(commit bls12381.G1Affine, size uint64, start *
 		return err
 	}
 
-	log.Println(amount)
 	tx, err = proofIns.AddFile(ins.transactor, ToSolidityG1(commit), size, start, end, credential)
 	if err != nil {
 		return err
@@ -193,7 +191,18 @@ func (ins *ProofInstance) SubmitAggregationProof(randomPoint fr.Element, commit 
 		return err
 	}
 
-	tx, err := proofIns.SubmitProof(ins.transactor, randomPoint.Bytes(), ToSolidityG1(commit), ToSolidityProof(proof))
+	info, err := proofIns.GetVerifyInfo(&bind.CallOpts{})
+	if err != nil {
+		return err
+	}
+
+	var rnd fr.Element
+	rnd.SetBytes(info.Rnd[:])
+	if !rnd.Equal(&randomPoint) {
+		return xerrors.Errorf("rnd is not equal to on-chain rnd")
+	}
+
+	tx, err := proofIns.SubmitProof(ins.transactor, info.Rnd, ToSolidityG1(commit), ToSolidityProof(proof))
 	if err != nil {
 		return err
 	}
@@ -362,22 +371,22 @@ func (ins *ProofInstance) AlterSetting(setting SettingInfo, vk bls12381.G2Affine
 	return CheckTx(ins.endpoint, ins.transactor.From, tx, "AlterSetting")
 }
 
-func (ins *ProofInstance) GetVerifyInfo() (fr.Element, *big.Int, error) {
+func (ins *ProofInstance) GetVerifyInfo() (fr.Element, bool, *big.Int, error) {
 	rnd := fr.Element{}
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
-		return rnd, nil, err
+		return rnd, false, nil, err
 	}
 	defer client.Close()
 
 	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
-		return rnd, nil, err
+		return rnd, false, nil, err
 	}
 
 	res, err := proofIns.GetVerifyInfo(&bind.CallOpts{})
 
-	return *rnd.SetBytes(res.Rnd[:]), res.Last, err
+	return *rnd.SetBytes(res.Rnd[:]), res.Lock, res.Last, err
 }
 
 func (ins *ProofInstance) GetProfitInfo() (ProfitInfo, error) {

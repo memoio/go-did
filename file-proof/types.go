@@ -198,6 +198,7 @@ func getErrorReason(ctx context.Context, endpoint string, from common.Address, t
 	}
 	res, err := client.CallContract(ctx, msg, nil)
 	if err != nil {
+		log.Println(res)
 		return "", err
 	}
 	return unpackError(res)

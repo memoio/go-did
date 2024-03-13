@@ -1,6 +1,6 @@
 module github.com/memoio/go-did
 
-go 1.18
+go 1.20
 
 replace (
 	github.com/memoio/contractsv2 => ../memov2-contractsv2
