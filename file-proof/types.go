@@ -9,6 +9,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/kzg"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -44,6 +45,39 @@ type SettingInfo struct {
 	Foundation      common.Address
 	ChalRewardRatio uint8
 	ChalPledge      *big.Int
+}
+
+type AddFileEvent struct {
+	Account common.Address
+	Commit  bls12381.G1Affine
+	Start   *big.Int
+	End     *big.Int
+	Size    uint64
+	Price   uint64
+	Raw     types.Log // Blockchain specific contextual infos
+}
+
+type SubmitProofEvent struct {
+	Rnd fr.Element
+	Cn  bls12381.G1Affine
+	Pn  kzg.OpeningProof
+	Res bool
+	Raw types.Log // Blockchain specific contextual infos
+}
+
+type NoFraudEvent struct {
+	Rnd          fr.Element
+	Submmitter   common.Address
+	Challenger   common.Address
+	Compensation *big.Int
+}
+
+type FraudEvent struct {
+	Rnd        fr.Element
+	Submmitter common.Address
+	Challenger common.Address
+	Fine       *big.Int
+	Reward     *big.Int
 }
 
 type AlterSettingInfo struct {
@@ -134,6 +168,17 @@ func ToSolidityProof(proof kzg.OpeningProof) proxyfileproof.IFileProofProofInfo 
 	return proxyfileproof.IFileProofProofInfo{
 		Npsi: Pi,
 		Y:    value,
+	}
+}
+
+func FromSolidityProof(proof proxyfileproof.IFileProofProofInfo) kzg.OpeningProof {
+	var value fr.Element
+	Pi := FromSolidityG1(proof.Npsi)
+	value.SetBytes(proof.Y[:])
+
+	return kzg.OpeningProof{
+		H:            Pi,
+		ClaimedValue: value,
 	}
 }
 

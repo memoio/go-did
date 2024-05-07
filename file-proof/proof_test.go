@@ -24,7 +24,6 @@ import (
 )
 
 var globalPrivateKeys []string
-var vkBytes = []byte{165, 28, 62, 86, 129, 157, 190, 133, 129, 43, 4, 192, 136, 168, 15, 150, 24, 52, 27, 59, 30, 100, 178, 37, 106, 218, 52, 104, 137, 196, 161, 154, 127, 23, 155, 85, 200, 199, 59, 31, 108, 6, 140, 237, 215, 135, 3, 99, 18, 28, 155, 16, 224, 117, 133, 185, 238, 241, 13, 199, 209, 16, 225, 148, 121, 151, 1, 113, 238, 170, 129, 121, 64, 107, 3, 32, 178, 115, 90, 112, 43, 3, 42, 44, 176, 14, 163, 113, 233, 228, 194, 201, 41, 171, 80, 182}
 
 func init() {
 	content, err := ioutil.ReadFile("../proof-keys.json")
@@ -37,14 +36,21 @@ func init() {
 		log.Fatal(err.Error())
 	}
 
-	log.Println(globalPrivateKeys)
+	for _, PrivateKey := range globalPrivateKeys {
+		sk, err := crypto.HexToECDSA(PrivateKey)
+		if err != nil {
+			log.Fatal(err.Error())
+		}
+
+		log.Println(crypto.PubkeyToAddress(sk.PublicKey))
+	}
 }
 
 func TestAddFile(t *testing.T) {
 	filesize := 1024 * 127
 
 	g1 := GenRandomG1()
-	etag := ToSolidityG1(g1)
+	// etag := ToSolidityG1(g1)
 
 	start := big.NewInt(time.Now().Unix())            // start time of file storage
 	end := new(big.Int).Add(start, big.NewInt(20*60)) // end  time of file storage
@@ -58,7 +64,7 @@ func TestAddFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hash := proofIns.GetCredentialHash2(etag, uint64(filesize), start, end)
+	hash := proofIns.GetCredentialHash(g1, uint64(filesize), start, end)
 	t.Log(hash)
 	credentical, err := com.Sign(hash, globalPrivateKeys[0])
 	if err != nil {
@@ -100,8 +106,8 @@ func TestAlterSettingInfo(t *testing.T) {
 	}
 	t.Log(string(data))
 
-	info.Interval = 60
-	info.Period = 60
+	info.Interval = 480
+	info.Period = 120
 	info.RespondTime = 30
 	info.Submitter = crypto.PubkeyToAddress(sk.PublicKey)
 	info.Receiver = crypto.PubkeyToAddress(sk.PublicKey)
@@ -203,6 +209,204 @@ func TestSubmitProof(t *testing.T) {
 	}
 }
 
+func TestSelectFiles(t *testing.T) {
+	sk, err := crypto.HexToECDSA(globalPrivateKeys[0])
+	if err != nil {
+		t.Log(err)
+	}
+
+	proofIns, err := NewProofInstance(sk, "dev")
+	if err != nil {
+		t.Log(err)
+	}
+
+	rnd, err := proofIns.GetRndRawBytes()
+	if err != nil {
+		t.Log(err)
+	}
+
+	challengeInfo, err := proofIns.GetChallengeInfo()
+	if err != nil {
+		t.Log(err)
+	}
+	length := challengeInfo.ChalLength.Int64()
+
+	// big.NewInt(0).SetBytes()
+
+	var random *big.Int = big.NewInt(0).SetBytes(rnd[:])
+	random = new(big.Int).Mod(random, big.NewInt(length))
+	startIndex := new(big.Int).Div(random, big.NewInt(2))
+	t.Log(length)
+	t.Log(startIndex)
+
+	sum, commit, err := proofIns.GetFileCommit(startIndex)
+	if err != nil {
+		t.Log(err)
+	}
+	t.Log(sum)
+	t.Log(commit)
+
+	commit, err = proofIns.GetSelectFileCommit(big.NewInt(0))
+	if err != nil {
+		t.Log(err)
+	}
+	t.Log(commit)
+
+	// commit, err = proofIns.GetSelectFileCommit(big.NewInt(1))
+	// if err != nil {
+	// 	t.Log(err)
+	// }
+	// t.Log(commit)
+
+	commit, err = proofIns.GetSelectFileCommit(big.NewInt(2))
+	if err != nil {
+		t.Log(err)
+	}
+	t.Log(commit)
+}
+
+func TestChallenge(t *testing.T) {
+	sk, err := crypto.HexToECDSA(globalPrivateKeys[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	instanceAddr, endpoint := com.GetInsEndPointByChain("dev")
+
+	client, err := ethclient.DialContext(context.TODO(), endpoint)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	instanceIns, err := inst.NewInstance(instanceAddr, client)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	tokenAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeERC20)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	tokenIns, err := erc.NewERC20(tokenAddr, client)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	proofIns, err := NewProofInstance(sk, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	setting, err := proofIns.GetSettingInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, last, err := proofIns.GetVerifyInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	amount, err := tokenIns.BalanceOf(&bind.CallOpts{}, crypto.PubkeyToAddress(sk.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(amount)
+
+	if time.Now().Unix() > last.Int64() {
+		start := time.Now().Unix()
+		chalTime := int64(setting.Interval) + int64(setting.Period)
+		dur := (start - last.Int64()) % chalTime
+		wait := chalTime - dur
+		time.Sleep(time.Duration(wait+1) * time.Second)
+		last = big.NewInt(time.Now().Unix())
+	} else {
+		wait := last.Int64() - time.Now().Unix()
+		time.Sleep(time.Duration(wait+1) * time.Second)
+	}
+
+	info, err := proofIns.GetChallengeInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.MarshalIndent(info, "", "\t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(string(data))
+
+	err = proofIns.Challenge(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("challenge-0")
+
+	info, err = proofIns.GetChallengeInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = json.MarshalIndent(info, "", "\t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(string(data))
+
+	amount, err = tokenIns.BalanceOf(&bind.CallOpts{}, crypto.PubkeyToAddress(sk.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(amount)
+	for {
+		info, err := proofIns.GetChallengeInfo()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if info.ChalStatus%2 == 1 {
+			if time.Now().Unix() > last.Int64()+int64(setting.RespondTime)*int64(info.ChalStatus+1) {
+				err = proofIns.EndChallenge()
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Log("we success beacause they failed to generate aggregate commit")
+				return
+			}
+		} else {
+			// one last step proof submitted, check if we win
+			if info.ChalStatus == 0 {
+				amount2, err := tokenIns.BalanceOf(&bind.CallOpts{}, crypto.PubkeyToAddress(sk.PublicKey))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Log(amount2)
+
+				if amount2.Cmp(amount) == 1 {
+					t.Log("we success beacause they failed on the last prove")
+				} else {
+					t.Log("we failed beacause they success on the last prove")
+				}
+
+				return
+			} else {
+				t.Log(time.Now().Unix(), last.Int64()+int64(setting.RespondTime)*int64(info.ChalStatus+1))
+				index := uint8(rand.Int()) % 10
+				// index := uint8(0)
+				err = proofIns.Challenge(index)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				t.Log("challenge-", info.ChalStatus)
+			}
+		}
+
+		time.Sleep(time.Second)
+	}
+}
+
+// func TestChallenge(t *testing)
+
 func GenRandomBytes(len int) []byte {
 	res := make([]byte, len)
 	for i := 0; i < len; i += 7 {
@@ -228,37 +432,59 @@ func calculateWatingTime(last, interval, period int64) time.Duration {
 	return time.Duration(waitingSeconds) * time.Second
 }
 
-func TestBalance(t *testing.T) {
+func TestGetAddress(t *testing.T) {
 	instanceAddr, endpoint := com.GetInsEndPointByChain("dev")
 
 	client, err := ethclient.DialContext(context.TODO(), endpoint)
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatal(err)
 	}
+
+	// chainID, err := client.NetworkID(context.Background())
+	// if err != nil {
+	// 	return err
+	// }
 
 	instanceIns, err := inst.NewInstance(instanceAddr, client)
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatal(err)
 	}
 
-	tokenAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeERC20)
+	address, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProof)
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatal(err)
 	}
+	t.Log(address)
 
-	tokenIns, err := erc.NewERC20(tokenAddr, client)
+	address, err = instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProofControl)
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatal(err)
 	}
+	t.Log(address)
 
-	balance, balanceErc20, err := getBalance(client, tokenIns, globalPrivateKeys[0])
+	address, err = instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProofProxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(address)
+}
+
+func TestBalance(t *testing.T) {
+	balance, balanceErc20, err := getBalance("dev", globalPrivateKeys[0])
 	if err != nil {
 		t.Fatal(err.Error())
 	}
 	t.Log(balance)
 	t.Log(balanceErc20)
 
-	balance, balanceErc20, err = getBalance(client, tokenIns, globalPrivateKeys[1])
+	balance, balanceErc20, err = getBalance("dev", globalPrivateKeys[1])
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	t.Log(balance)
+	t.Log(balanceErc20)
+
+	balance, balanceErc20, err = getBalance("dev", globalPrivateKeys[2])
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -266,7 +492,48 @@ func TestBalance(t *testing.T) {
 	t.Log(balanceErc20)
 }
 
-func getBalance(client *ethclient.Client, tokenIns *erc.ERC20, sk string) (*big.Int, *big.Int, error) {
+func TestTransfer(t *testing.T) {
+	sk, err := crypto.HexToECDSA(globalPrivateKeys[1])
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	var pledge = big.NewInt(1000000000000000000)
+	var amount = new(big.Int).Mul(pledge, big.NewInt(1000))
+	t.Log(amount)
+
+	transferMemo("dev", globalPrivateKeys[0], crypto.PubkeyToAddress(sk.PublicKey), amount)
+	transferEth("dev", globalPrivateKeys[0], crypto.PubkeyToAddress(sk.PublicKey), pledge)
+}
+
+func getBalance(chain string, sk string) (*big.Int, *big.Int, error) {
+	instanceAddr, endpoint := com.GetInsEndPointByChain(chain)
+
+	client, err := ethclient.DialContext(context.TODO(), endpoint)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// chainID, err := client.NetworkID(context.Background())
+	// if err != nil {
+	// 	return err
+	// }
+
+	instanceIns, err := inst.NewInstance(instanceAddr, client)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tokenAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeERC20)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tokenIns, err := erc.NewERC20(tokenAddr, client)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	sk0, err := crypto.HexToECDSA(sk)
 	if err != nil {
 		return nil, nil, err
@@ -283,11 +550,34 @@ func getBalance(client *ethclient.Client, tokenIns *erc.ERC20, sk string) (*big.
 	return balance, balanceErc20, nil
 }
 
-func transferMemo(endpoint string, client *ethclient.Client, tokenIns *erc.ERC20, fromSK string, to common.Address, amount *big.Int) error {
+func transferMemo(chain string, fromSK string, to common.Address, amount *big.Int) error {
+	instanceAddr, endpoint := com.GetInsEndPointByChain(chain)
+
+	client, err := ethclient.DialContext(context.TODO(), endpoint)
+	if err != nil {
+		return err
+	}
+
 	chainID, err := client.NetworkID(context.Background())
 	if err != nil {
-		chainID = big.NewInt(985)
+		return err
 	}
+
+	instanceIns, err := inst.NewInstance(instanceAddr, client)
+	if err != nil {
+		return err
+	}
+
+	tokenAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeERC20)
+	if err != nil {
+		return err
+	}
+
+	tokenIns, err := erc.NewERC20(tokenAddr, client)
+	if err != nil {
+		return err
+	}
+
 	auth, err := com.MakeAuth(chainID, fromSK)
 	if err != nil {
 		return err
@@ -299,7 +589,14 @@ func transferMemo(endpoint string, client *ethclient.Client, tokenIns *erc.ERC20
 	return CheckTx(endpoint, auth.From, tx, "transfer memo")
 }
 
-func transferEth(endpoint string, client *ethclient.Client, fromSK string, to common.Address, amount *big.Int) error {
+func transferEth(chain string, fromSK string, to common.Address, amount *big.Int) error {
+	_, endpoint := com.GetInsEndPointByChain(chain)
+
+	client, err := ethclient.DialContext(context.TODO(), endpoint)
+	if err != nil {
+		return err
+	}
+
 	privateKey, err := crypto.HexToECDSA(fromSK)
 	if err != nil {
 		return err
