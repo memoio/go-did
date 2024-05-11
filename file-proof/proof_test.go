@@ -64,7 +64,7 @@ func TestAddFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hash := proofIns.GetCredentialHash(g1, uint64(filesize), start, end)
+	hash := proofIns.GetCredentialHash(crypto.PubkeyToAddress(userSk.PublicKey), g1, uint64(filesize), start, end)
 	t.Log(hash)
 	credentical, err := com.Sign(hash, globalPrivateKeys[0])
 	if err != nil {

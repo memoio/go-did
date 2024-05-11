@@ -130,8 +130,8 @@ func (ins *ProofInstance) AddFile(commit bls12381.G1Affine, size uint64, start *
 		return err
 	}
 
-	// check credential
-	hash := ins.GetCredentialHash(commit, size, start, end)
+	// // check credential
+	hash := ins.GetCredentialHash(ins.transactor.From, commit, size, start, end)
 	publicKey, err := crypto.SigToPub(hash, credential)
 	if err != nil {
 		return err
@@ -747,31 +747,31 @@ func (ins *ProofInstance) GetAlterSettingInfoHash(setting SettingInfo, vk bls123
 	return getAlterSettingInfoHash(ins.proofControllerAddr, ins.authAddr, setting, vk, nonce), nil
 }
 
-func (ins *ProofInstance) GetCredentialHash(commit bls12381.G1Affine, size uint64, start *big.Int, end *big.Int) []byte {
-	return getCredentialHash(ins.proofAddr, ins.transactor.From, commit, size, start, end)
+func (ins *ProofInstance) GetCredentialHash(address common.Address, commit bls12381.G1Affine, size uint64, start *big.Int, end *big.Int) []byte {
+	return getCredentialHash(ins.proofAddr, address, commit, size, start, end)
 }
 
-func GetCredentialHash(chain string, address common.Address, commit bls12381.G1Affine, size uint64, start *big.Int, end *big.Int) ([]byte, error) {
-	instanceAddr, endpoint := com.GetInsEndPointByChain(chain)
+// func GetCredentialHash(chain string, address common.Address, commit bls12381.G1Affine, size uint64, start *big.Int, end *big.Int) ([]byte, error) {
+// 	instanceAddr, endpoint := com.GetInsEndPointByChain(chain)
 
-	client, err := ethclient.DialContext(context.TODO(), endpoint)
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
+// 	client, err := ethclient.DialContext(context.TODO(), endpoint)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	defer client.Close()
 
-	instanceIns, err := inst.NewInstance(instanceAddr, client)
-	if err != nil {
-		return nil, err
-	}
+// 	instanceIns, err := inst.NewInstance(instanceAddr, client)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	proofAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProof)
-	if err != nil {
-		return nil, err
-	}
+// 	proofAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProof)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	return getCredentialHash(proofAddr, address, commit, size, start, end), nil
-}
+// 	return getCredentialHash(proofAddr, address, commit, size, start, end), nil
+// }
 
 // CheckTx check whether transaction is successful through receipt
 func CheckTx(endPoint string, from common.Address, tx *types.Transaction, name string) error {
