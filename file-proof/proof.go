@@ -193,6 +193,26 @@ func (ins *ProofInstance) GenerateRnd() error {
 	return CheckTx(ins.endpoint, ins.transactor.From, tx, "GenerateRnd")
 }
 
+func (ins *ProofInstance) BeSubmitter() error {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return err
+	}
+
+	tx, err := proofIns.BeSubmitter(ins.transactor)
+	if err != nil {
+		return err
+	}
+
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "BeSubmitter")
+}
+
 func (ins *ProofInstance) SubmitAggregationProof(randomPoint fr.Element, commit bls12381.G1Affine, proof kzg.OpeningProof) error {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
