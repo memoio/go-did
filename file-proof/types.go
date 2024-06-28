@@ -27,11 +27,11 @@ type ProfitInfo struct {
 }
 
 type ChallengeInfo struct {
-	ChalStatus uint8
-	Challenger common.Address
+	Status uint8
 	ChalIndex  uint8
+	Challenger common.Address
 	StartIndex *big.Int
-	ChalLength *big.Int
+	DividedCn [10][4][32]byte
 }
 
 type SettingInfo struct {
@@ -40,11 +40,14 @@ type SettingInfo struct {
 	ChalSum         uint32
 	RespondTime     uint32
 	Price           uint64
-	Submitter       common.Address
-	Receiver        common.Address
-	Foundation      common.Address
-	ChalRewardRatio uint8
+	PenaltyPercentage uint8
+	SubPledge *big.Int
 	ChalPledge      *big.Int
+}
+
+type SubmitterInfo struct{
+	MainSubmitter common.Address
+	SubmittersNum *big.Int
 }
 
 type AddFileEvent struct {
@@ -58,26 +61,52 @@ type AddFileEvent struct {
 }
 
 type SubmitProofEvent struct {
+	Submitter common.Address
 	Rnd fr.Element
 	Cn  bls12381.G1Affine
 	Pn  kzg.OpeningProof
-	Res bool
+	Last *big.Int
+	Profit *big.Int
 	Raw types.Log // Blockchain specific contextual infos
 }
 
-type NoFraudEvent struct {
-	Rnd          fr.Element
-	Submmitter   common.Address
-	Challenger   common.Address
-	Compensation *big.Int
+type NoProofsEvent struct {
+	OldLast *big.Int
+	NewLast *big.Int
+	MissedProfit *big.Int
 }
 
-type FraudEvent struct {
-	Rnd        fr.Element
-	Submmitter common.Address
+type ChallengeCnEvent struct {
+	Submitter common.Address
 	Challenger common.Address
-	Fine       *big.Int
-	Reward     *big.Int
+	Last *big.Int
+	Round uint8
+	ChallengeIndex uint8
+	Raw types.Log // Blockchain specific contextual infos
+}
+
+type ResponseChallengeEvent struct {
+	Submitter common.Address
+	Challenger common.Address
+	Last *big.Int
+	Round uint8
+	Raw types.Log // Blockchain specific contextual infos
+}
+
+type ChallengeResultEvent struct {
+	Submitter common.Address
+	Challenger common.Address
+	Last *big.Int
+	Result bool
+	Raw types.Log // Blockchain specific contextual infos
+}
+
+type PenalizeEvent struct {
+	PenalizedAccount common.Address
+	RewardedAccount common.Address
+	RewardAmount *big.Int
+	ToFoundationAmount *big.Int
+	Raw types.Log // Blockchain specific contextual infos
 }
 
 type AlterSettingInfo struct {
@@ -182,7 +211,7 @@ func FromSolidityProof(proof proxyfileproof.IFileProofProofInfo) kzg.OpeningProo
 	}
 }
 
-func getAlterSettingInfoHash(instanceAddr, authAddr common.Address, setting SettingInfo, vk bls12381.G2Affine, nonce *big.Int) []byte {
+func getAlterSettingInfoHash(fileProofControlAddr, authAddr common.Address, setting SettingInfo, vk bls12381.G2Affine, nonce *big.Int) []byte {
 	interval := make([]byte, 4)
 	period := make([]byte, 4)
 	challengeSum := make([]byte, 4)
@@ -194,22 +223,21 @@ func getAlterSettingInfoHash(instanceAddr, authAddr common.Address, setting Sett
 	binary.BigEndian.PutUint32(respondTime, setting.RespondTime)
 	binary.BigEndian.PutUint64(price, setting.Price)
 
-	pledge := common.LeftPadBytes(setting.ChalPledge.Bytes(), 32)
+	subPledge := common.LeftPadBytes(setting.SubPledge.Bytes(), 32)
+	chalPledge := common.LeftPadBytes(setting.ChalPledge.Bytes(), 32)
 	vkBytes := ToAppendedBytesG2(vk)
 
 	hash := crypto.Keccak256(
-		instanceAddr.Bytes(),
+		fileProofControlAddr.Bytes(),
 		[]byte("alterFileProofSetting"),
 		interval,
 		period,
 		challengeSum,
 		respondTime,
 		price,
-		setting.Submitter.Bytes(),
-		setting.Receiver.Bytes(),
-		setting.Foundation.Bytes(),
-		[]byte{setting.ChalRewardRatio},
-		pledge,
+		[]byte{setting.PenaltyPercentage},
+		subPledge,
+		chalPledge,
 		vkBytes)
 
 	m := common.LeftPadBytes(nonce.Bytes(), 32)

@@ -3,7 +3,7 @@ package proof
 import (
 	"context"
 	"encoding/json"
-	"io/ioutil"
+	"os"
 	"log"
 	"math/big"
 	"math/rand"
@@ -26,7 +26,7 @@ import (
 var globalPrivateKeys []string
 
 func init() {
-	content, err := ioutil.ReadFile("../proof-keys.json")
+	content, err := os.ReadFile("../proof-keys.json")
 	if err != nil {
 		log.Fatal(err.Error())
 	}
@@ -109,8 +109,11 @@ func TestAlterSettingInfo(t *testing.T) {
 	info.Interval = 480
 	info.Period = 120
 	info.RespondTime = 30
-	info.Submitter = crypto.PubkeyToAddress(sk.PublicKey)
-	info.Receiver = crypto.PubkeyToAddress(sk.PublicKey)
+	info.ChalSum = 100
+	info.PenaltyPercentage = 70
+	info.Price = 1
+	info.ChalPledge = big.NewInt(1000)
+	info.SubPledge = big.NewInt(2000)
 	srs, err := kzg.NewSRS(1024*4, big.NewInt(985))
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +161,7 @@ func TestSubmitProof(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lastRnd, _, last, err := proofIns.GetVerifyInfo()
+	lastRnd, err := proofIns.GetRndRawBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,20 +171,24 @@ func TestSubmitProof(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wait := calculateWatingTime(last.Int64(), int64(setting.Interval), int64(setting.Period))
-	t.Log(wait)
-	time.Sleep(wait)
-
 	err = proofIns.GenerateRnd()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	nowRnd, _, _, err := proofIns.GetVerifyInfo()
+	last, err := proofIns.GetLast()
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	wait := calculateWatingTime(last.Int64(), int64(setting.Interval), int64(setting.Period))
+	t.Log(wait)
+	time.Sleep(wait)
+
+	nowRnd, err := proofIns.GetRndRawBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Log(lastRnd, nowRnd)
 
 	data := GenRandomBytes(128)
@@ -197,13 +204,15 @@ func TestSubmitProof(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	kzgProof, err := kzg.Open(poly, nowRnd, srs.Pk)
+	var rnd fr.Element
+	rnd.SetBytes(nowRnd[:])
+	kzgProof, err := kzg.Open(poly, rnd, srs.Pk)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Log(kzgProof.H, kzgProof.ClaimedValue)
 
-	err = proofIns.SubmitAggregationProof(nowRnd, commit, kzgProof)
+	err = proofIns.SubmitAggregationProof(rnd, commit, kzgProof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,18 +233,16 @@ func TestSelectFiles(t *testing.T) {
 	if err != nil {
 		t.Log(err)
 	}
-
-	challengeInfo, err := proofIns.GetChallengeInfo()
+	
+	length, err := proofIns.GetFilesAmount()
 	if err != nil {
 		t.Log(err)
 	}
-	length := challengeInfo.ChalLength.Int64()
-
-	// big.NewInt(0).SetBytes()
 
 	var random *big.Int = big.NewInt(0).SetBytes(rnd[:])
-	random = new(big.Int).Mod(random, big.NewInt(length))
+	random = new(big.Int).Mod(random, length)
 	startIndex := new(big.Int).Div(random, big.NewInt(2))
+
 	t.Log(length)
 	t.Log(startIndex)
 
@@ -246,19 +253,13 @@ func TestSelectFiles(t *testing.T) {
 	t.Log(sum)
 	t.Log(commit)
 
-	commit, err = proofIns.GetSelectFileCommit(big.NewInt(0))
+	commit, err = proofIns.GetSelectFileCommit(proofIns.transactor.From, big.NewInt(0))
 	if err != nil {
 		t.Log(err)
 	}
 	t.Log(commit)
 
-	// commit, err = proofIns.GetSelectFileCommit(big.NewInt(1))
-	// if err != nil {
-	// 	t.Log(err)
-	// }
-	// t.Log(commit)
-
-	commit, err = proofIns.GetSelectFileCommit(big.NewInt(2))
+	commit, err = proofIns.GetSelectFileCommit(proofIns.transactor.From, big.NewInt(2))
 	if err != nil {
 		t.Log(err)
 	}
@@ -303,7 +304,17 @@ func TestChallenge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, last, err := proofIns.GetVerifyInfo()
+	submitters, err := proofIns.GetSubmittersInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = proofIns.GenerateRnd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	last, err := proofIns.GetLast()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +337,7 @@ func TestChallenge(t *testing.T) {
 		time.Sleep(time.Duration(wait+1) * time.Second)
 	}
 
-	info, err := proofIns.GetChallengeInfo()
+	info, err := proofIns.GetChallengeInfo(submitters.MainSubmitter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,13 +347,13 @@ func TestChallenge(t *testing.T) {
 	}
 	t.Log(string(data))
 
-	err = proofIns.Challenge(0)
+	err = proofIns.ChallengeCn(submitters.MainSubmitter, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Log("challenge-0")
 
-	info, err = proofIns.GetChallengeInfo()
+	info, err = proofIns.GetChallengeInfo(submitters.MainSubmitter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,14 +369,14 @@ func TestChallenge(t *testing.T) {
 	}
 	t.Log(amount)
 	for {
-		info, err := proofIns.GetChallengeInfo()
+		info, err := proofIns.GetChallengeInfo(submitters.MainSubmitter)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if info.ChalStatus%2 == 1 {
-			if time.Now().Unix() > last.Int64()+int64(setting.RespondTime)*int64(info.ChalStatus+1) {
-				err = proofIns.EndChallenge()
+		if info.Status%2 == 1 {
+			if time.Now().Unix() > last.Int64()+int64(setting.RespondTime)*int64(info.Status+1) {
+				err = proofIns.EndChallenge(submitters.MainSubmitter)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -374,7 +385,7 @@ func TestChallenge(t *testing.T) {
 			}
 		} else {
 			// one last step proof submitted, check if we win
-			if info.ChalStatus == 0 {
+			if info.Status == 0 {
 				amount2, err := tokenIns.BalanceOf(&bind.CallOpts{}, crypto.PubkeyToAddress(sk.PublicKey))
 				if err != nil {
 					t.Fatal(err)
@@ -389,15 +400,15 @@ func TestChallenge(t *testing.T) {
 
 				return
 			} else {
-				t.Log(time.Now().Unix(), last.Int64()+int64(setting.RespondTime)*int64(info.ChalStatus+1))
+				t.Log(time.Now().Unix(), last.Int64()+int64(setting.RespondTime)*int64(info.Status+1))
 				index := uint8(rand.Int()) % 10
 				// index := uint8(0)
-				err = proofIns.Challenge(index)
+				err = proofIns.ChallengeCn(submitters.MainSubmitter, index)
 				if err != nil {
 					t.Fatal(err)
 				}
 
-				t.Log("challenge-", info.ChalStatus)
+				t.Log("challenge-", info.Status)
 			}
 		}
 
