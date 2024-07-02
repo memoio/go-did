@@ -150,7 +150,7 @@ func (ins *ProofInstance) AddFile(commit bls12381.G1Affine, size uint64, start *
 		return err
 	}
 	if crypto.PubkeyToAddress(*publicKey).Hex() != submitterInfo.MainSubmitter.Hex() {
-		return xerrors.Errorf("credential is not right")
+		return xerrors.Errorf("credential is not right, signer: %s mainSubmitter: %s", crypto.PubkeyToAddress(*publicKey).Hex(), submitterInfo.MainSubmitter.Hex())
 	}
 
 	amount := big.NewInt(int64(setting.Price))
