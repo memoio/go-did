@@ -264,7 +264,7 @@ func TestSelectFiles(t *testing.T) {
 	t.Log(sum2)
 	t.Log(commit2)
 
-	t.Log("sum right? ", sum0==sum2)
+	t.Log("sum right? ", sum0.Cmp(sum2)==0)
 
 	commit_0, err := proofIns.GetSelectFileCommit(proofIns.transactor.From, big.NewInt(0))
 	if err != nil {
@@ -277,9 +277,6 @@ func TestSelectFiles(t *testing.T) {
 		t.Log(err)
 	}
 	t.Log(commit_2)
-
-	t.Log("get commit0 right? ", commit0.Equal(&commit_0))
-	t.Log("get commit2 right? ", commit2.Equal(&commit_2))
 }
 
 func TestChallengePn(t *testing.T) {
@@ -358,6 +355,7 @@ func TestChallengePn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	info.DividedCn = [10][4][32]byte{}
 	data, err := json.MarshalIndent(info, "", "\t")
 	if err != nil {
 		t.Fatal(err)
@@ -373,6 +371,7 @@ func TestChallengePn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	info.DividedCn = [10][4][32]byte{}
 	data, err = json.MarshalIndent(info, "", "\t")
 	if err != nil {
 		t.Fatal(err)
