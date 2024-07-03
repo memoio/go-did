@@ -3,6 +3,7 @@ package proof
 import (
 	"context"
 	"crypto/ecdsa"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -194,6 +195,8 @@ func (ins *ProofInstance) GenerateRnd() error {
 }
 
 func (ins *ProofInstance) BeSubmitter() error {
+	fmt.Println("submitter:", ins.transactor.From)
+
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return err
@@ -205,7 +208,24 @@ func (ins *ProofInstance) BeSubmitter() error {
 		return err
 	}
 
-	tx, err := proofIns.BeSubmitter(ins.transactor)
+	info, err := proofIns.GetSettingInfo(&bind.CallOpts{})
+	if err != nil {
+		return err
+	}
+	erc20Ins, err := erc.NewERC20(ins.tokenAddr, client)
+	if err != nil {
+		return err
+	}
+	tx, err := erc20Ins.Approve(ins.transactor, ins.pledgeAddr, info.SubPledge)
+	if err != nil {
+		return err
+	}
+	err = CheckTx(ins.endpoint, ins.transactor.From, tx, "Approve")
+	if err != nil {
+		return err
+	}
+
+	tx, err = proofIns.BeSubmitter(ins.transactor)
 	if err != nil {
 		return err
 	}
