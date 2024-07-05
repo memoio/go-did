@@ -3,10 +3,10 @@ package proof
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"log"
 	"math/big"
 	"math/rand"
+	"os"
 	"testing"
 	"time"
 
@@ -79,8 +79,12 @@ func TestAddFile(t *testing.T) {
 
 func GenRandomG1() bls12381.G1Affine {
 	var res bls12381.G1Affine
-	res.X.SetRandom()
-	res.Y.SetRandom()
+	
+	var scalar fr.Element
+	scalar.SetRandom()
+
+	_, _, g1, _ := bls12381.Generators()
+	res.ScalarMultiplication(&g1, scalar.BigInt(new(big.Int)))
 	return res
 }
 
@@ -232,7 +236,7 @@ func TestSelectFiles(t *testing.T) {
 	if err != nil {
 		t.Log(err)
 	}
-	
+
 	length, err := proofIns.GetFilesAmount()
 	if err != nil {
 		t.Log(err)
@@ -264,7 +268,7 @@ func TestSelectFiles(t *testing.T) {
 	t.Log(sum2)
 	t.Log(commit2)
 
-	t.Log("sum right? ", sum0.Cmp(sum2)==0)
+	t.Log("sum right? ", sum0.Cmp(sum2) == 0)
 
 	commit_0, err := proofIns.GetSelectFileCommit(proofIns.transactor.From, big.NewInt(0))
 	if err != nil {
@@ -580,7 +584,7 @@ func TestPledge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Log("pledge bal: ",pledgeBal)
+	t.Log("pledge bal: ", pledgeBal)
 
 	err = proofIns.Pledge(big.NewInt(100))
 	if err != nil {
@@ -597,7 +601,7 @@ func TestPledge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Log("pledge bal: ",pledgeBal)
+	t.Log("pledge bal: ", pledgeBal)
 }
 
 func TestWithdraw(t *testing.T) {
@@ -643,7 +647,7 @@ func TestWithdraw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Log("pledge bal: ",pledgeBal)
+	t.Log("pledge bal: ", pledgeBal)
 
 	err = proofIns.Withdraw()
 	if err != nil {
@@ -660,7 +664,7 @@ func TestWithdraw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Log("pledge bal: ",pledgeBal)
+	t.Log("pledge bal: ", pledgeBal)
 }
 
 func GenRandomBytes(len int) []byte {
