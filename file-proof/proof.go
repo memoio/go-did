@@ -3,6 +3,7 @@ package proof
 import (
 	"context"
 	"crypto/ecdsa"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -34,6 +35,7 @@ type ProofInstance struct {
 	proofAddr           common.Address
 	proofProxyAddr      common.Address
 	proofControllerAddr common.Address
+	pledgeAddr          common.Address
 	tokenAddr           common.Address
 	authAddr            common.Address
 }
@@ -66,6 +68,12 @@ func NewProofInstance(privateKey *ecdsa.PrivateKey, chain string) (*ProofInstanc
 
 	// get proof proxy address
 	proofProxyAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProofProxy)
+	if err != nil {
+		return nil, err
+	}
+
+	// get pledge address
+	pledgeAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProofPledge)
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +111,7 @@ func NewProofInstance(privateKey *ecdsa.PrivateKey, chain string) (*ProofInstanc
 		proofAddr:           proofAddr,
 		proofProxyAddr:      proofProxyAddr,
 		proofControllerAddr: proofControllerAddr,
+		pledgeAddr:          pledgeAddr,
 		tokenAddr:           tokenAddr,
 		authAddr:            authAddr,
 	}, nil
@@ -130,14 +139,19 @@ func (ins *ProofInstance) AddFile(commit bls12381.G1Affine, size uint64, start *
 		return err
 	}
 
+	submitterInfo, err := ins.GetSubmittersInfo()
+	if err != nil {
+		return err
+	}
+
 	// // check credential
 	hash := ins.GetCredentialHash(ins.transactor.From, commit, size, start, end)
 	publicKey, err := crypto.SigToPub(hash, credential)
 	if err != nil {
 		return err
 	}
-	if crypto.PubkeyToAddress(*publicKey).Hex() != setting.Submitter.Hex() {
-		return xerrors.Errorf("credential is not right")
+	if crypto.PubkeyToAddress(*publicKey).Hex() != submitterInfo.MainSubmitter.Hex() {
+		return xerrors.Errorf("credential is not right, signer: %s mainSubmitter: %s", crypto.PubkeyToAddress(*publicKey).Hex(), submitterInfo.MainSubmitter.Hex())
 	}
 
 	amount := big.NewInt(int64(setting.Price))
@@ -180,6 +194,45 @@ func (ins *ProofInstance) GenerateRnd() error {
 	return CheckTx(ins.endpoint, ins.transactor.From, tx, "GenerateRnd")
 }
 
+func (ins *ProofInstance) BeSubmitter() error {
+	fmt.Println("submitter:", ins.transactor.From)
+
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return err
+	}
+
+	info, err := proofIns.GetSettingInfo(&bind.CallOpts{})
+	if err != nil {
+		return err
+	}
+	erc20Ins, err := erc.NewERC20(ins.tokenAddr, client)
+	if err != nil {
+		return err
+	}
+	tx, err := erc20Ins.Approve(ins.transactor, ins.pledgeAddr, info.SubPledge)
+	if err != nil {
+		return err
+	}
+	err = CheckTx(ins.endpoint, ins.transactor.From, tx, "Approve")
+	if err != nil {
+		return err
+	}
+
+	tx, err = proofIns.BeSubmitter(ins.transactor)
+	if err != nil {
+		return err
+	}
+
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "BeSubmitter")
+}
+
 func (ins *ProofInstance) SubmitAggregationProof(randomPoint fr.Element, commit bls12381.G1Affine, proof kzg.OpeningProof) error {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
@@ -192,18 +245,44 @@ func (ins *ProofInstance) SubmitAggregationProof(randomPoint fr.Element, commit 
 		return err
 	}
 
-	info, err := proofIns.GetVerifyInfo(&bind.CallOpts{})
+	setting, err := ins.GetSettingInfo()
+	if err != nil {
+		return err
+	}
+
+	pledgeBal, err := proofIns.Bal(&bind.CallOpts{}, ins.transactor.From)
+	if err != nil {
+		return err
+	}
+
+	if pledgeBal.Cmp(setting.SubPledge) < 0 {
+		erc20Ins, err := erc.NewERC20(ins.tokenAddr, client)
+		if err != nil {
+			return err
+		}
+		amount := pledgeBal.Sub(setting.SubPledge, pledgeBal)
+		tx, err := erc20Ins.Approve(ins.transactor, ins.pledgeAddr, amount)
+		if err != nil {
+			return err
+		}
+		err = CheckTx(ins.endpoint, ins.transactor.From, tx, "Approve")
+		if err != nil {
+			return err
+		}
+	}
+
+	rndBytes, err := proofIns.Rnd(&bind.CallOpts{})
 	if err != nil {
 		return err
 	}
 
 	var rnd fr.Element
-	rnd.SetBytes(info.Rnd[:])
+	rnd.SetBytes(rndBytes[:])
 	if !rnd.Equal(&randomPoint) {
 		return xerrors.Errorf("rnd is not equal to on-chain rnd")
 	}
 
-	tx, err := proofIns.SubmitProof(ins.transactor, info.Rnd, ToSolidityG1(commit), ToSolidityProof(proof))
+	tx, err := proofIns.SubmitProof(ins.transactor, ToSolidityG1(commit), ToSolidityProof(proof))
 	if err != nil {
 		return err
 	}
@@ -211,7 +290,7 @@ func (ins *ProofInstance) SubmitAggregationProof(randomPoint fr.Element, commit 
 	return CheckTx(ins.endpoint, ins.transactor.From, tx, "SubmitAggregationProof")
 }
 
-func (ins *ProofInstance) Challenge(challengeIndex uint8) error {
+func (ins *ProofInstance) ChallengePn(submitter common.Address) error {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return err
@@ -223,23 +302,23 @@ func (ins *ProofInstance) Challenge(challengeIndex uint8) error {
 		return err
 	}
 
-	erc20Ins, err := erc.NewERC20(ins.tokenAddr, client)
-	if err != nil {
-		return err
-	}
-
 	setting, err := ins.GetSettingInfo()
 	if err != nil {
 		return err
 	}
 
-	challenge, err := ins.GetChallengeInfo()
+	pledgeBal, err := proofIns.Bal(&bind.CallOpts{}, ins.transactor.From)
 	if err != nil {
 		return err
 	}
 
-	if challenge.ChalStatus == 0 {
-		tx, err := erc20Ins.Approve(ins.transactor, ins.proofAddr, setting.ChalPledge)
+	if pledgeBal.Cmp(setting.ChalPledge) < 0 {
+		erc20Ins, err := erc.NewERC20(ins.tokenAddr, client)
+		if err != nil {
+			return err
+		}
+		amount := pledgeBal.Sub(setting.ChalPledge, pledgeBal)
+		tx, err := erc20Ins.Approve(ins.transactor, ins.pledgeAddr, amount)
 		if err != nil {
 			return err
 		}
@@ -249,15 +328,61 @@ func (ins *ProofInstance) Challenge(challengeIndex uint8) error {
 		}
 	}
 
-	tx, err := proofIns.DoChallenge(ins.transactor, challengeIndex)
+	tx, err := proofIns.ChallengePn(ins.transactor, submitter)
 	if err != nil {
 		return err
 	}
 
-	return CheckTx(ins.endpoint, ins.transactor.From, tx, "Challenge")
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "ChallengePn")
 }
 
-func (ins *ProofInstance) ResponseChallenge(commits [10]bls12381.G1Affine) error {
+func (ins *ProofInstance) ChallengeCn(submitter common.Address, challengeIndex uint8) error {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return err
+	}
+
+	setting, err := ins.GetSettingInfo()
+	if err != nil {
+		return err
+	}
+
+	pledgeBal, err := proofIns.Bal(&bind.CallOpts{}, ins.transactor.From)
+	if err != nil {
+		return err
+	}
+
+	if pledgeBal.Cmp(setting.ChalPledge) < 0 {
+		erc20Ins, err := erc.NewERC20(ins.tokenAddr, client)
+		if err != nil {
+			return err
+		}
+		amount := pledgeBal.Sub(setting.ChalPledge, pledgeBal)
+		tx, err := erc20Ins.Approve(ins.transactor, ins.pledgeAddr, amount)
+		if err != nil {
+			return err
+		}
+		err = CheckTx(ins.endpoint, ins.transactor.From, tx, "Approve")
+		if err != nil {
+			return err
+		}
+	}
+
+	tx, err := proofIns.ChallengeCn(ins.transactor, submitter, challengeIndex)
+	if err != nil {
+		return err
+	}
+
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "ChallengeCn")
+}
+
+func (ins *ProofInstance) ResponseChallenge(commits [10]bls12381.G1Affine, lastOneStep bool) error {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return err
@@ -273,7 +398,7 @@ func (ins *ProofInstance) ResponseChallenge(commits [10]bls12381.G1Affine) error
 	for index, commit := range commits {
 		commitsBytes[index] = ToSolidityG1(commit)
 	}
-	tx, err := proofIns.ResponseChal(ins.transactor, commitsBytes)
+	tx, err := proofIns.ResponseChal(ins.transactor, commitsBytes, lastOneStep)
 	if err != nil {
 		return err
 	}
@@ -281,7 +406,7 @@ func (ins *ProofInstance) ResponseChallenge(commits [10]bls12381.G1Affine) error
 	return CheckTx(ins.endpoint, ins.transactor.From, tx, "ResponseChallenge")
 }
 
-func (ins *ProofInstance) OneStepProve(commits []bls12381.G1Affine) error {
+func (ins *ProofInstance) EndChallenge(submitter common.Address) error {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return err
@@ -293,31 +418,7 @@ func (ins *ProofInstance) OneStepProve(commits []bls12381.G1Affine) error {
 		return err
 	}
 
-	var commitsBytes [][4][32]byte = make([][4][32]byte, len(commits))
-	for index, commit := range commits {
-		commitsBytes[index] = ToSolidityG1(commit)
-	}
-	tx, err := proofIns.OneStepProve(ins.transactor, commitsBytes)
-	if err != nil {
-		return err
-	}
-
-	return CheckTx(ins.endpoint, ins.transactor.From, tx, "OneStepProve")
-}
-
-func (ins *ProofInstance) EndChallenge() error {
-	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
-	if err != nil {
-		return err
-	}
-
-	tx, err := proofIns.EndChallenge(ins.transactor)
+	tx, err := proofIns.EndChallenge(ins.transactor, submitter)
 	if err != nil {
 		return err
 	}
@@ -345,6 +446,60 @@ func (ins *ProofInstance) WithdrawMissedProfit() error {
 	return CheckTx(ins.endpoint, ins.transactor.From, tx, "WithdrawMissedProfit")
 }
 
+func (ins *ProofInstance) Pledge(amount *big.Int) error {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return err
+	}
+
+	erc20Ins, err := erc.NewERC20(ins.tokenAddr, client)
+	if err != nil {
+		return err
+	}
+
+	tx, err := erc20Ins.Approve(ins.transactor, ins.pledgeAddr, amount)
+	if err != nil {
+		return err
+	}
+	err = CheckTx(ins.endpoint, ins.transactor.From, tx, "Approve")
+	if err != nil {
+		return err
+	}
+
+	tx, err = proofIns.FpPledge(ins.transactor, amount)
+	if err != nil {
+		return err
+	}
+
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "Pledge")
+}
+
+func (ins *ProofInstance) Withdraw() error {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return err
+	}
+
+	tx, err := proofIns.FpWithdraw(ins.transactor)
+	if err != nil {
+		return err
+	}
+
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "Withdraw")
+}
+
 func (ins *ProofInstance) AlterSetting(setting SettingInfo, vk bls12381.G2Affine, signs [5][]byte) error {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
@@ -358,17 +513,15 @@ func (ins *ProofInstance) AlterSetting(setting SettingInfo, vk bls12381.G2Affine
 	}
 
 	info := proxyfileproof.IFileProofSettingInfo{
-		Interval:        setting.Interval,
-		Period:          setting.Period,
-		ChalSum:         setting.ChalSum,
-		RespondTime:     setting.RespondTime,
-		Price:           setting.Price,
-		Submitter:       setting.Submitter,
-		Receiver:        setting.Receiver,
-		Foundation:      setting.Foundation,
-		ChalRewardRatio: setting.ChalRewardRatio,
-		ChalPledge:      setting.ChalPledge,
-		Vk:              ToSolidityG2(vk),
+		Interval:          setting.Interval,
+		Period:            setting.Period,
+		ChalSum:           setting.ChalSum,
+		RespondTime:       setting.RespondTime,
+		Price:             setting.Price,
+		PenaltyPercentage: setting.PenaltyPercentage,
+		SubPledge:         setting.SubPledge,
+		ChalPledge:        setting.ChalPledge,
+		Vk:                ToSolidityG2(vk),
 	}
 
 	tx, err := proofIns.AlterSetting(ins.transactor, info, signs)
@@ -379,7 +532,27 @@ func (ins *ProofInstance) AlterSetting(setting SettingInfo, vk bls12381.G2Affine
 	return CheckTx(ins.endpoint, ins.transactor.From, tx, "AlterSetting")
 }
 
-func (ins *ProofInstance) GetSelectFileCommit(index *big.Int) (bls12381.G1Affine, error) {
+func (ins *ProofInstance) AlterFoundation(foundation common.Address, signs [5][]byte) error {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return err
+	}
+
+	tx, err := proofIns.AlterFoundation(ins.transactor, foundation, signs)
+	if err != nil {
+		return err
+	}
+
+	return CheckTx(ins.endpoint, ins.transactor.From, tx, "AlterFoundation")
+}
+
+func (ins *ProofInstance) GetSelectFileCommit(submitter common.Address, index *big.Int) (bls12381.G1Affine, error) {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return bls12381.G1Affine{}, err
@@ -391,7 +564,7 @@ func (ins *ProofInstance) GetSelectFileCommit(index *big.Int) (bls12381.G1Affine
 		return bls12381.G1Affine{}, err
 	}
 
-	commit, err := proofIns.SelectFiles(&bind.CallOpts{}, index)
+	commit, err := proofIns.SelectFiles(&bind.CallOpts{}, submitter, index)
 	if err != nil {
 		return bls12381.G1Affine{}, err
 	}
@@ -419,49 +592,6 @@ func (ins *ProofInstance) GetFileCommit(index *big.Int) (*big.Int, bls12381.G1Af
 	return info.Sum, FromSolidityG1(info.Commitment), nil
 }
 
-// func (ins *ProofInstance) GetProofInfo() error {
-// 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	defer client.Close()
-
-// 	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	_, err = proofIns.GetProofInfo(&bind.CallOpts{})
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	return nil
-
-// 	// info, err := proofIns.GetCommit(&bind.CallOpts{}, index)
-// 	// if err != nil {
-// 	// 	return err
-// 	// }
-// }
-
-func (ins *ProofInstance) GetVerifyInfo() (fr.Element, bool, *big.Int, error) {
-	rnd := fr.Element{}
-	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
-	if err != nil {
-		return rnd, false, nil, err
-	}
-	defer client.Close()
-
-	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
-	if err != nil {
-		return rnd, false, nil, err
-	}
-
-	res, err := proofIns.GetVerifyInfo(&bind.CallOpts{})
-
-	return *rnd.SetBytes(res.Rnd[:]), res.Lock, res.Last, err
-}
-
 func (ins *ProofInstance) GetRndRawBytes() ([32]byte, error) {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
@@ -474,40 +604,80 @@ func (ins *ProofInstance) GetRndRawBytes() ([32]byte, error) {
 		return [32]byte{}, err
 	}
 
-	res, err := proofIns.GetVerifyInfo(&bind.CallOpts{})
-	return res.Rnd, err
+	rnd, err := proofIns.Rnd(&bind.CallOpts{})
+	return rnd, err
 }
 
-func (ins *ProofInstance) GetProfitInfo() (ProfitInfo, error) {
-	var info ProfitInfo
+func (ins *ProofInstance) GetLast() (*big.Int, error) {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
-		return info, err
+		return nil, err
 	}
 	defer client.Close()
 
 	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
-		return info, err
+		return nil, err
 	}
 
-	return proofIns.GetProfitInfo(&bind.CallOpts{})
+	last, err := proofIns.Last(&bind.CallOpts{})
+	return last, err
 }
 
-func (ins *ProofInstance) GetChallengeInfo() (ChallengeInfo, error) {
-	var info ChallengeInfo
+func (ins *ProofInstance) GetFilesAmount() (*big.Int, error) {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
-		return info, err
+		return nil, err
 	}
 	defer client.Close()
 
 	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
 	if err != nil {
-		return info, err
+		return nil, err
 	}
 
-	return proofIns.GetChallengeInfo(&bind.CallOpts{})
+	amount, err := proofIns.FilesNum(&bind.CallOpts{})
+	return amount, err
+}
+
+func (ins *ProofInstance) GetFinalExpire() (*big.Int, error) {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return nil, err
+	}
+
+	amount, err := proofIns.FinalExpire(&bind.CallOpts{})
+	return amount, err
+}
+
+func (ins *ProofInstance) GetChallengeInfo(submitter common.Address) (ChallengeInfo, error) {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return ChallengeInfo{}, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return ChallengeInfo{}, err
+	}
+
+	dividedCn, err := proofIns.DividedCn(&bind.CallOpts{}, submitter)
+	if err != nil {
+		return ChallengeInfo{}, err
+	}
+
+	info, err := proofIns.Challenges(&bind.CallOpts{}, submitter)
+	if err != nil {
+		return ChallengeInfo{}, err
+	}
+	return ChallengeInfo{Status: info.Status, ChalIndex: info.ChalIndex, Challenger: info.Challenger, StartIndex: info.StartIndex, DividedCn: dividedCn}, nil
 }
 
 func (ins *ProofInstance) GetSettingInfo() (SettingInfo, error) {
@@ -526,6 +696,37 @@ func (ins *ProofInstance) GetSettingInfo() (SettingInfo, error) {
 	return proofIns.GetSettingInfo(&bind.CallOpts{})
 }
 
+func (ins *ProofInstance) GetSubmittersInfo() (SubmitterInfo, error) {
+	var info SubmitterInfo
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return info, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return info, err
+	}
+
+	return proofIns.SubmittersInfo(&bind.CallOpts{})
+}
+
+func (ins *ProofInstance) IsSubmitter(account common.Address) (bool, error) {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return false, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return false, err
+	}
+
+	return proofIns.IsSubmitter(&bind.CallOpts{}, account)
+}
+
 func (ins *ProofInstance) GetVK() (bls12381.G2Affine, error) {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
@@ -540,6 +741,22 @@ func (ins *ProofInstance) GetVK() (bls12381.G2Affine, error) {
 
 	vkSol, err := proofIns.GetVK(&bind.CallOpts{})
 	return FromSolidityG2(vkSol), err
+}
+
+func (ins *ProofInstance) GetPledgeBalance(account common.Address) (*big.Int, error) {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return nil, err
+	}
+
+	amount, err := proofIns.Bal(&bind.CallOpts{}, account)
+	return amount, err
 }
 
 func (ins *ProofInstance) FilterAddFile(opt *bind.FilterOpts, accounts []common.Address) ([]AddFileEvent, error) {
@@ -578,7 +795,7 @@ func (ins *ProofInstance) FilterAddFile(opt *bind.FilterOpts, accounts []common.
 	return addFiles, nil
 }
 
-func (ins *ProofInstance) FilterSubmitProof(opt *bind.FilterOpts, rnds [][32]byte) ([]SubmitProofEvent, error) {
+func (ins *ProofInstance) FilterSubmitProof(opt *bind.FilterOpts, submitters []common.Address, rnds [][32]byte) ([]SubmitProofEvent, error) {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return nil, err
@@ -590,7 +807,7 @@ func (ins *ProofInstance) FilterSubmitProof(opt *bind.FilterOpts, rnds [][32]byt
 		return nil, err
 	}
 
-	proofIter, err := proofIns.FilterSubmitProof(opt, rnds)
+	proofIter, err := proofIns.FilterSubmitProof(opt, submitters, rnds)
 	if err != nil {
 		return nil, err
 	}
@@ -601,11 +818,13 @@ func (ins *ProofInstance) FilterSubmitProof(opt *bind.FilterOpts, rnds [][32]byt
 	for proofIter.Next() {
 		rnd.SetBytes(proofIter.Event.Rnd[:])
 		proof := SubmitProofEvent{
-			Rnd: rnd,
-			Cn:  FromSolidityG1(proofIter.Event.Cn),
-			Pn:  FromSolidityProof(proofIter.Event.Pn),
-			Res: proofIter.Event.Res,
-			Raw: proofIter.Event.Raw,
+			Submitter: proofIter.Event.Submitter,
+			Rnd:       rnd,
+			Cn:        FromSolidityG1(proofIter.Event.Cn),
+			Pn:        FromSolidityProof(proofIter.Event.Pn),
+			Last:      proofIter.Event.Last,
+			Profit:    proofIter.Event.Profit,
+			Raw:       proofIter.Event.Raw,
 		}
 		proofs = append(proofs, proof)
 	}
@@ -613,7 +832,7 @@ func (ins *ProofInstance) FilterSubmitProof(opt *bind.FilterOpts, rnds [][32]byt
 	return proofs, nil
 }
 
-func (ins *ProofInstance) FilterFraud(opt *bind.FilterOpts, rnds [][32]byte, submitters []common.Address, challengers []common.Address) ([]FraudEvent, error) {
+func (ins *ProofInstance) FilterNoProofs(opt *bind.FilterOpts) ([]NoProofsEvent, error) {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return nil, err
@@ -625,30 +844,26 @@ func (ins *ProofInstance) FilterFraud(opt *bind.FilterOpts, rnds [][32]byte, sub
 		return nil, err
 	}
 
-	fraudIter, err := proofIns.FilterFraud(opt, rnds, submitters, challengers)
+	noProofsIter, err := proofIns.FilterNoProofs(opt)
 	if err != nil {
 		return nil, err
 	}
-	defer fraudIter.Close()
+	defer noProofsIter.Close()
 
-	var frauds []FraudEvent
-	var rndEle = fr.Element{}
-	for fraudIter.Next() {
-		fraud := FraudEvent{
-			Rnd:        *rndEle.SetBytes(fraudIter.Event.Rnd[:]),
-			Challenger: fraudIter.Event.Challenger,
-			Submmitter: fraudIter.Event.Submitter,
-			Fine:       fraudIter.Event.Fine,
-			Reward:     fraudIter.Event.Reward,
+	var noProofs []NoProofsEvent
+	for noProofsIter.Next() {
+		noProof := NoProofsEvent{
+			OldLast:      noProofsIter.Event.OldLast,
+			NewLast:      noProofsIter.Event.NewLast,
+			MissedProfit: noProofsIter.Event.MisProfit,
 		}
-
-		frauds = append(frauds, fraud)
+		noProofs = append(noProofs, noProof)
 	}
 
-	return frauds, nil
+	return noProofs, nil
 }
 
-func (ins *ProofInstance) FilterNoFraud(opt *bind.FilterOpts, rnds [][32]byte, submitters []common.Address, challengers []common.Address) ([]NoFraudEvent, error) {
+func (ins *ProofInstance) FilterChallengeCn(opt *bind.FilterOpts, submitters []common.Address, challengers []common.Address, lasts []*big.Int) ([]ChallengeCnEvent, error) {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
 		return nil, err
@@ -660,26 +875,125 @@ func (ins *ProofInstance) FilterNoFraud(opt *bind.FilterOpts, rnds [][32]byte, s
 		return nil, err
 	}
 
-	fraudIter, err := proofIns.FilterNoFraud(opt, rnds, submitters, challengers)
+	challengeIter, err := proofIns.FilterChallengeCn(opt, submitters, challengers, lasts)
 	if err != nil {
 		return nil, err
 	}
-	defer fraudIter.Close()
+	defer challengeIter.Close()
 
-	var nofrauds []NoFraudEvent
-	var rndEle = fr.Element{}
-	for fraudIter.Next() {
-		nofraud := NoFraudEvent{
-			Rnd:          *rndEle.SetBytes(fraudIter.Event.Rnd[:]),
-			Challenger:   fraudIter.Event.Challenger,
-			Submmitter:   fraudIter.Event.Submitter,
-			Compensation: fraudIter.Event.Compensation,
+	var challenges []ChallengeCnEvent
+	for challengeIter.Next() {
+		challenge := ChallengeCnEvent{
+			Submitter:      challengeIter.Event.Submitter,
+			Challenger:     challengeIter.Event.Challenger,
+			Last:           challengeIter.Event.Last,
+			Round:          challengeIter.Event.Round,
+			ChallengeIndex: challengeIter.Event.ChalIndex,
+			Raw:            challengeIter.Event.Raw,
 		}
-
-		nofrauds = append(nofrauds, nofraud)
+		challenges = append(challenges, challenge)
 	}
 
-	return nofrauds, nil
+	return challenges, nil
+}
+
+func (ins *ProofInstance) FilterResponseChallenge(opt *bind.FilterOpts, submitters []common.Address, challengers []common.Address, lasts []*big.Int) ([]ResponseChallengeEvent, error) {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewIFileProof(ins.proofAddr, client)
+	if err != nil {
+		return nil, err
+	}
+
+	responseIter, err := proofIns.FilterResponseChal(opt, submitters, challengers, lasts)
+	if err != nil {
+		return nil, err
+	}
+	defer responseIter.Close()
+
+	var responses []ResponseChallengeEvent
+	for responseIter.Next() {
+		response := ResponseChallengeEvent{
+			Submitter:  responseIter.Event.Submitter,
+			Challenger: responseIter.Event.Challenger,
+			Last:       responseIter.Event.Last,
+			Round:      responseIter.Event.Round,
+			Raw:        responseIter.Event.Raw,
+		}
+		responses = append(responses, response)
+	}
+
+	return responses, nil
+}
+
+func (ins *ProofInstance) FilterChallengeResult(opt *bind.FilterOpts, submitters []common.Address, challengers []common.Address, lasts []*big.Int) ([]ChallengeResultEvent, error) {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewIFileProof(ins.proofAddr, client)
+	if err != nil {
+		return nil, err
+	}
+
+	resIter, err := proofIns.FilterChallengeRes(opt, submitters, challengers, lasts)
+	if err != nil {
+		return nil, err
+	}
+	defer resIter.Close()
+
+	var results []ChallengeResultEvent
+	for resIter.Next() {
+		res := ChallengeResultEvent{
+			Submitter:  resIter.Event.Submitter,
+			Challenger: resIter.Event.Challenger,
+			Last:       resIter.Event.Last,
+			Result:     resIter.Event.Res,
+			Raw:        resIter.Event.Raw,
+		}
+		results = append(results, res)
+	}
+
+	return results, nil
+}
+
+func (ins *ProofInstance) FilterPenalize(opt *bind.FilterOpts, penalizedAccounts []common.Address, rewardedAccounts []common.Address) ([]PenalizeEvent, error) {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	pledgeIns, err := proxyfileproof.NewIPledge(ins.pledgeAddr, client)
+	if err != nil {
+		return nil, err
+	}
+
+	peIter, err := pledgeIns.FilterPenalize(opt, penalizedAccounts, rewardedAccounts)
+	if err != nil {
+		return nil, err
+	}
+	defer peIter.Close()
+
+	var penalizes []PenalizeEvent
+	for peIter.Next() {
+		penalize := PenalizeEvent{
+			PenalizedAccount:   peIter.Event.From,
+			RewardedAccount:    peIter.Event.To,
+			RewardAmount:       peIter.Event.ToValue,
+			ToFoundationAmount: peIter.Event.FoundationValue,
+			Raw:                peIter.Event.Raw,
+		}
+		penalizes = append(penalizes, penalize)
+	}
+
+	return penalizes, nil
 }
 
 func (ins *ProofInstance) IsSubmitterWinner() (bool, error) {
@@ -694,34 +1008,45 @@ func (ins *ProofInstance) IsSubmitterWinner() (bool, error) {
 		return false, err
 	}
 
-	info, err := proofIns.GetVerifyInfo(&bind.CallOpts{})
+	rnd, err := proofIns.Rnd(&bind.CallOpts{})
 	if err != nil {
 		return false, err
 	}
 
-	frauds, err := ins.FilterFraud(&bind.FilterOpts{}, [][32]byte{info.Rnd}, nil, nil)
+	submits, err := ins.FilterSubmitProof(&bind.FilterOpts{}, []common.Address{ins.transactor.From}, [][32]byte{rnd})
 	if err != nil {
 		return false, err
 	}
-	if len(frauds) > 0 {
+	if len(submits) == 0 {
+		return false, xerrors.Errorf("Have not submitted proof at current cycle")
+	}
+
+	challengeInfo, err := ins.GetChallengeInfo(ins.transactor.From)
+	if err != nil {
+		return false, err
+	}
+
+	if challengeInfo.Status == 0 {
+		return false, xerrors.Errorf("Nobody has challenged yet")
+	}
+
+	if challengeInfo.Status != 11 {
+		return false, xerrors.Errorf("The challenge is not completed")
+	}
+
+	last := submits[0].Last
+
+	results, err := ins.FilterChallengeResult(&bind.FilterOpts{}, []common.Address{ins.transactor.From}, nil, []*big.Int{last})
+	if err != nil {
+		return false, err
+	}
+
+	if len(results) == 0 {
+		return false, xerrors.Errorf("Filter ChallengeRes event but result is nil")
+	}
+
+	if !results[0].Result {
 		return false, nil
-	}
-
-	nofrauds, err := ins.FilterFraud(&bind.FilterOpts{}, [][32]byte{info.Rnd}, nil, nil)
-	if err != nil {
-		return false, err
-	}
-	if len(nofrauds) == 0 {
-		challengeInfo, err := ins.GetChallengeInfo()
-		if err != nil {
-			return false, err
-		}
-
-		if challengeInfo.ChalStatus != 0 {
-			return false, xerrors.Errorf("The challenge is not completed")
-		} else {
-			return false, xerrors.Errorf("Nobody has challenged yet")
-		}
 	}
 
 	return true, nil
