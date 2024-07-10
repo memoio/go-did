@@ -29,6 +29,13 @@ var (
 	nextBlockTime    = 5 // 出块时间5s
 )
 
+type ContractAddress struct {
+	PledgeAddr common.Address
+	ProofAddr common.Address
+	ProofControlAddr common.Address
+	ProofProxyAddr common.Address
+}
+
 type ProofInstance struct {
 	endpoint            string
 	transactor          *bind.TransactOpts
@@ -40,7 +47,7 @@ type ProofInstance struct {
 	authAddr            common.Address
 }
 
-func NewProofInstance(privateKey *ecdsa.PrivateKey, chain string) (*ProofInstance, error) {
+func NewProofInstance(privateKey *ecdsa.PrivateKey, chain string, addrs *ContractAddress) (*ProofInstance, error) {
 	instanceAddr, endpoint := com.GetInsEndPointByChain(chain)
 
 	client, err := ethclient.DialContext(context.TODO(), endpoint)
@@ -60,32 +67,8 @@ func NewProofInstance(privateKey *ecdsa.PrivateKey, chain string) (*ProofInstanc
 		return nil, err
 	}
 
-	// get proof address
-	proofAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProof)
-	if err != nil {
-		return nil, err
-	}
-
-	// get proof proxy address
-	proofProxyAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProofProxy)
-	if err != nil {
-		return nil, err
-	}
-
-	// get pledge address
-	pledgeAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProofPledge)
-	if err != nil {
-		return nil, err
-	}
-
 	// get token address
 	tokenAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeERC20)
-	if err != nil {
-		return nil, err
-	}
-
-	// get proof controller address
-	proofControllerAddr, err := instanceIns.Instances(&bind.CallOpts{}, com.TypeFileProofControl)
 	if err != nil {
 		return nil, err
 	}
@@ -108,10 +91,10 @@ func NewProofInstance(privateKey *ecdsa.PrivateKey, chain string) (*ProofInstanc
 	return &ProofInstance{
 		endpoint:            endpoint,
 		transactor:          auth,
-		proofAddr:           proofAddr,
-		proofProxyAddr:      proofProxyAddr,
-		proofControllerAddr: proofControllerAddr,
-		pledgeAddr:          pledgeAddr,
+		proofAddr:           addrs.ProofAddr,
+		proofProxyAddr:      addrs.ProofProxyAddr,
+		proofControllerAddr: addrs.ProofControlAddr,
+		pledgeAddr:          addrs.PledgeAddr,
 		tokenAddr:           tokenAddr,
 		authAddr:            authAddr,
 	}, nil
