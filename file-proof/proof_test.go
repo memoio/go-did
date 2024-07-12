@@ -2,6 +2,7 @@ package proof
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"math/big"
@@ -63,10 +64,10 @@ func init() {
 		addrSlice[i] = addr
 	}
 	addrs = ContractAddress{
-		PledgeAddr: addrSlice[0],
-		ProofAddr: addrSlice[1],
+		PledgeAddr:       addrSlice[0],
+		ProofAddr:        addrSlice[1],
 		ProofControlAddr: addrSlice[2],
-		ProofProxyAddr: addrSlice[3],
+		ProofProxyAddr:   addrSlice[3],
 	}
 }
 
@@ -689,6 +690,26 @@ func TestWithdraw(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Log("pledge bal: ", pledgeBal)
+}
+
+func TestGetCommit(t *testing.T) {
+	sk, err := crypto.HexToECDSA(globalPrivateKeys[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proofIns, err := NewProofInstance(sk, "dev", &addrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	num, commit, err := proofIns.GetFileCommit(big.NewInt(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitByte := commit.Bytes()
+	t.Log("commit num: ", num)
+	t.Log("commit[0]: ", hex.EncodeToString(commitByte[:]))
 }
 
 func GenRandomBytes(len int) []byte {
