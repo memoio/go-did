@@ -24,6 +24,8 @@ import (
 )
 
 var globalPrivateKeys []string
+var hexAddrs []string
+var addrs ContractAddress
 
 func init() {
 	content, err := os.ReadFile("../proof-keys.json")
@@ -44,6 +46,28 @@ func init() {
 
 		log.Println(crypto.PubkeyToAddress(sk.PublicKey))
 	}
+
+	content, err = os.ReadFile("../contract-addrs.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = json.Unmarshal(content, &hexAddrs)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	addrSlice := make([]common.Address, 4)
+	for i, hexAddr := range hexAddrs {
+		addr := common.HexToAddress(hexAddr)
+		addrSlice[i] = addr
+	}
+	addrs = ContractAddress{
+		PledgeAddr: addrSlice[0],
+		ProofAddr: addrSlice[1],
+		ProofControlAddr: addrSlice[2],
+		ProofProxyAddr: addrSlice[3],
+	}
 }
 
 func TestAddFile(t *testing.T) {
@@ -59,7 +83,7 @@ func TestAddFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proofIns, err := NewProofInstance(userSk, "dev")
+	proofIns, err := NewProofInstance(userSk, "dev", &addrs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +103,7 @@ func TestAddFile(t *testing.T) {
 
 func GenRandomG1() bls12381.G1Affine {
 	var res bls12381.G1Affine
-	
+
 	var scalar fr.Element
 	scalar.SetRandom()
 
@@ -94,7 +118,7 @@ func TestAlterSettingInfo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	proofInstance, err := NewProofInstance(sk, "dev")
+	proofInstance, err := NewProofInstance(sk, "dev", &addrs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +184,7 @@ func TestSubmitProof(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	proofIns, err := NewProofInstance(sk, "dev")
+	proofIns, err := NewProofInstance(sk, "dev", &addrs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +251,7 @@ func TestSelectFiles(t *testing.T) {
 		t.Log(err)
 	}
 
-	proofIns, err := NewProofInstance(sk, "dev")
+	proofIns, err := NewProofInstance(sk, "dev", &addrs)
 	if err != nil {
 		t.Log(err)
 	}
@@ -311,7 +335,7 @@ func TestChallengePn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	proofIns, err := NewProofInstance(sk, "dev")
+	proofIns, err := NewProofInstance(sk, "dev", &addrs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +441,7 @@ func TestChallengeCn(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	proofIns, err := NewProofInstance(sk, "dev")
+	proofIns, err := NewProofInstance(sk, "dev", &addrs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +593,7 @@ func TestPledge(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	proofIns, err := NewProofInstance(sk, "dev")
+	proofIns, err := NewProofInstance(sk, "dev", &addrs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -632,7 +656,7 @@ func TestWithdraw(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	proofIns, err := NewProofInstance(sk, "dev")
+	proofIns, err := NewProofInstance(sk, "dev", &addrs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -665,6 +689,26 @@ func TestWithdraw(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Log("pledge bal: ", pledgeBal)
+}
+
+func TestGetCommit(t *testing.T) {
+	sk, err := crypto.HexToECDSA(globalPrivateKeys[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proofIns, err := NewProofInstance(sk, "dev", &addrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	num, commit, err := proofIns.GetFileCommit(big.NewInt(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitByte := commit.Bytes()
+	t.Log("commit num: ", num)
+	t.Log("commit[0]: ", hex.EncodeToString(commitByte[:]))
 }
 
 func GenRandomBytes(len int) []byte {
