@@ -691,6 +691,26 @@ func TestWithdraw(t *testing.T) {
 	t.Log("pledge bal: ", pledgeBal)
 }
 
+func TestGetCommit(t *testing.T) {
+	sk, err := crypto.HexToECDSA(globalPrivateKeys[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proofIns, err := NewProofInstance(sk, "dev", &addrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	num, commit, err := proofIns.GetFileCommit(big.NewInt(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitByte := commit.Bytes()
+	t.Log("commit num: ", num)
+	t.Log("commit[0]: ", hex.EncodeToString(commitByte[:]))
+}
+
 func GenRandomBytes(len int) []byte {
 	res := make([]byte, len)
 	for i := 0; i < len; i += 7 {
