@@ -575,6 +575,31 @@ func (ins *ProofInstance) GetFileCommit(index *big.Int) (*big.Int, bls12381.G1Af
 	return info.Sum, FromSolidityG1(info.Commitment), nil
 }
 
+func (ins *ProofInstance) GetFileInfo(commit bls12381.G1Affine) (uint64, *big.Int, error) {
+	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
+	if err != nil {
+		return 0,nil, err
+	}
+	defer client.Close()
+
+	proofIns, err := proxyfileproof.NewProxyProof(ins.proofProxyAddr, client)
+	if err != nil {
+		return 0,nil, err
+	}
+
+	commitment := ToSolidityG1(commit)
+	concatenateCommit := append([]byte(commitment[0][:]), commitment[1][:]...)
+	concatenateCommit = append(concatenateCommit, commitment[2][:]...)
+	concatenateCommit = append(concatenateCommit, commitment[3][:]...)
+
+	info, err := proofIns.GetFileInfo(&bind.CallOpts{}, concatenateCommit)
+	if err != nil {
+		return 0,nil, err
+	}
+
+	return info.Index, info.Expiration, nil
+}
+
 func (ins *ProofInstance) GetRndRawBytes() ([32]byte, error) {
 	client, err := ethclient.DialContext(context.TODO(), ins.endpoint)
 	if err != nil {
