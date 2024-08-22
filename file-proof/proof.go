@@ -1111,7 +1111,7 @@ func CheckTx(endPoint string, from common.Address, tx *types.Transaction, name s
 	var receipt *types.Receipt
 
 	t := checkTxSleepTime
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 30; i++ {
 		time.Sleep(time.Duration(t) * time.Second)
 		receipt = com.GetTransactionReceipt(endPoint, tx.Hash())
 		if receipt != nil {
