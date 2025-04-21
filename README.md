@@ -1,22 +1,23 @@
 # Memo DID And Mfile DID Golang SDK
 
-## 介绍
+## Introduction
 
-该文档主要介绍如何使用go-did，从而和Memo DID以及Mfile DID的合约进行交互。关于DID的详细信息请查阅[DID文档](https://www.w3.org/TR/did-core/)，关于Memo DID的详细信息请查阅[Memo DID文档](http://132.232.87.203:8088/did/docs/blob/master/memo-did%E8%AE%BE%E8%AE%A1.md)，关于Mfile DID的详细信息请查阅[Mfile DID文档](http://132.232.87.203:8088/did/docs/blob/master/mfile-did%E8%AE%BE%E8%AE%A1.md)。
+This document mainly introduces how to use go-did to interact with Memo DID and Mfile DID contracts. For more information about DID, please refer to the [DID document](https://www.w3.org/TR/did-core/), for more information about Memo DID, please refer to the [Memo DID document](https://github.com/memoio/did-docs/blob/master/memo-did-design.md), for more information about Mfile DID, please refer to the [Mfile DID document](https://github.com/memoio/did-docs/blob/master/mfile-did-design.md).
 
-## 安装
+## Install
 
 -
 
-## 与Memo DID合约进行交互
+## Interact with Memo DID Contracts
 
-在go-did中，提供了`MemoDIDController`类，用于控制合约中保存的Memo DID文档，从而实现对Memo DID权限的控制。目前支持如下链：
+In go-did, the `MemoDIDController` class is provided to control the Memo DID document saved in the contract, thereby realizing the control of Memo DID permissions. Currently the following chains are supported:
 
 - dev：https://devchain.metamemo.one:8501
+- megrez: https://chain.metamemo.one:8501
 
-### 创建DID
+### Create DID
 
-创建一个全新的DID。
+Create a new DID.
 
 ```go
 package main
@@ -48,9 +49,9 @@ func main() {
 }
 ```
 
-### 查看DID文档详细信息
+### View DID document details
 
-如果DID已经创建，可以查看完整的DID文档。
+If the DID has been created, you can view the complete DID document.
 
 ```go
 package main
@@ -84,9 +85,9 @@ func main() {
 }
 ```
 
-### 添加新的验证方法
+### Add new VerificationMethod
 
-可以为一个已有的Memo DID添加新的验证方法。
+It is possible to add new verification methods to an existing Memo DID.
 
 ```go
 package main
@@ -120,9 +121,9 @@ func main() {
 }
 ```
 
-### 修改验证方法
+### Update VerificationMethod
 
-可以修改已有的验证方法
+Existing authentication methods can be modified.
 
 ```go
 package main
@@ -157,9 +158,9 @@ func main() {
 }
 ```
 
-### 删除验证方法
+### Delete VerificationMethod
 
-可以删除已有的验证方法
+You can delete existing authentication methods.
 
 ```go
 package main
@@ -194,9 +195,9 @@ func main() {
 }
 ```
 
-### 添加登录验证方法
+### Add login verification method
 
-在创建Memo DID后，可以添加新的登录验证方法，验证方法包括公钥信息等。成功添加后，可以使用对应私钥的签名，以该DID的身份线下登录第三方应用，例如memo中间件。
+After creating a Memo DID, you can add a new login verification method, which includes public key information, etc. After successfully adding, you can use the signature of the corresponding private key to log in to a third-party application offline as the DID, such as the memo middleware.
 
 ```go
 package main
@@ -231,9 +232,9 @@ func main() {
 }
 ```
 
-### 删除登录验证方法
+### Deleting a login verification method
 
-可以删除已有的登录方法。删除成功后，使用对应私钥的签名，将不能以该DID的身份线下登录第三方应用。
+You can delete an existing login method. After the deletion is successful, you will not be able to log in to third-party applications offline with the DID using the signature of the corresponding private key.
 
 ```go
 package main
@@ -268,9 +269,9 @@ func main() {
 }
 ```
 
-### 添加代理访问验证方法
+### Add proxy access authentication method
 
-在创建Memo DID后，可以添加新的代理访问验证方法，验证方法包括公钥信息等。成功添加后，可以使用对应私钥的签名，以该DID的身份访问需要权限的资源，例如，Memo中间件中用户的私有文件。
+After creating a Memo DID, you can add a new proxy access verification method, which includes public key information, etc. After successfully adding, you can use the signature of the corresponding private key to access resources that require permissions as the DID, such as the user's private files in the Memo middleware.
 
 ```go
 package main
@@ -305,9 +306,9 @@ func main() {
 }
 ```
 
-### 删除代理访问验证方法
+### Deleting a proxy access authentication method
 
-可以删除原有的代理访问验证方法删除成功后，使用对应私钥的签名，将不能以该DID的身份访问需要权限的资源。
+The original proxy access verification method can be deleted. After the deletion is successful, the corresponding private key signature will be used to sign the DID and the resources that require permission will not be accessible.
 
 ```go
 package main
@@ -342,9 +343,9 @@ func main() {
 }
 ```
 
-### 购买读权限
+### Purchase read permissions
 
-能够通过付费的方式购买私有文件的读权限。在购买读权限后，会将memo did添加到mfile did的read字段中，从而能够线下请求mfile did对应的文件。在购买读权限之前，需要调用approve方法。
+You can purchase the read permission of private files by paying. After purchasing the read permission, memo did will be added to the read field of mfile did, so that you can request the file corresponding to mfile did offline. Before purchasing the read permission, you need to call the approve method.
 
 ```go
 package main
@@ -381,9 +382,9 @@ func main() {
 }
 ```
 
-### 删除DID
+### Deleting a DID
 
-可以删除已创建的DID。删除后，DID将不可用且该DID将无法重新创建。
+Delete the created DID. Once deleted, the DID will be unavailable and cannot be recreated.
 
 ```go
 package main
@@ -412,15 +413,16 @@ func main() {
 }
 ```
 
-## 与Mfile DID合约进行交互
+## Interacting with the Mfile DID contract
 
-在go-did中，提供了`MfileDIDController`类，用于控制合约中保存的Mfile DID文档，从而实现对Mfile DID权限的控制。目前支持如下链：
+In go-did, the `MfileDIDController` class is provided to control the Mfile DID document saved in the contract, thereby realizing the control of Mfile DID permissions. Currently the following chains are supported:
 
 - dev：https://devchain.metamemo.one:8501
+- megrez: https://chain.metamemo.one:8501
 
-### 创建DID
+### Create DID
 
-创建一个全新的Mfile DID。
+Create a new Mfile DID.
 
 ```go
 package main
@@ -454,9 +456,9 @@ func main() {
 }
 ```
 
-### 更改所有者
+### Change Owner
 
-Mfile DID的所有者可以通过更改所有者的方式，将Mfile DID实现转让的功能。
+The owner of Mfile DID can transfer the Mfile DID by changing the owner.
 
 ```go
 package main
@@ -488,9 +490,9 @@ func main() {
 }
 ```
 
-### 更改文件类型
+### Change the file type
 
-Mfile DID对应的文件包括公开文件以及私有文件，可以通过该方法修改文件的类型。其中，0表示private文件，1表示public文件
+The files corresponding to Mfile DID include public files and private files. You can modify the file type through this method. 0 represents private files and 1 represents public files.
 
 ```go
 package main
@@ -519,9 +521,7 @@ func main() {
 }
 ```
 
-### 更改文件的价格
-
-可以修改文件的价格。
+### Change the price of the file
 
 ```go
 package main
@@ -552,9 +552,9 @@ func main() {
 }
 ```
 
-### 更改文件关键词
+### Change file keywords
 
-文件的关键词用于搜索文件，可以根据需要更改文件的关键词
+The keywords of the file are used to search for the file. You can change the keywords of the file as needed.
 
 ```go
 package main
@@ -583,9 +583,9 @@ func main() {
 }
 ```
 
-### 授予读取权限
+### Grant Read Permission
 
-当Mfile DID显示的文件为私有文件时，其他Memo DID的所有者除了购买读权限外，还可以直接授予读取权限。
+When the file displayed by the Mfile DID is a private file, other Memo DID owners can directly grant read permissions in addition to purchasing read permissions.
 
 ```go
 package main
@@ -617,9 +617,9 @@ func main() {
 }
 ```
 
-### 撤销读取权限
+### Revoke Read Permission
 
-可以撤销之前授予的读取权限，但是无法撤销其他人购买的读取权限。
+You can revoke previously granted read permissions, but you cannot revoke read permissions purchased by others.
 
 ```go
 package main
@@ -651,9 +651,9 @@ func main() {
 }
 ```
 
-### 删除DID
+### Delete DID
 
-可以删除Mfile DID
+Delete Mfile DID.
 
 ```go
 package main
@@ -681,4 +681,3 @@ func main() {
 	}
 }
 ```
-
