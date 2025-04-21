@@ -18,8 +18,8 @@ import (
 )
 
 var (
-	checkTxSleepTime = 6 // 先等待6s（出块时间加1）
-	nextBlockTime    = 5 // 出块时间5s
+	checkTxSleepTime = 6 // wait 6s(blocktime + 1s)
+	nextBlockTime    = 5 // blocktime
 )
 
 type MfileDIDController struct {

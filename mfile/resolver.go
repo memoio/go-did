@@ -128,13 +128,13 @@ func (r *MfileDIDResolver) Resolve(didString string) (*types.MfileDIDDocument, e
 func QueryAllRead(accountIns *proxy.IFileDid, did *types.MfileDID) ([]types.MemoDID, error) {
 	var reads []types.MemoDID
 
-	// 查询付费获取的读取权限
+	// query paid access permissions
 	readIter, err := accountIns.FilterBuyRead(&bind.FilterOpts{}, []string{did.Identifier})
 	if err != nil {
 		return nil, err
 	}
 	for readIter.Next() {
-		// 目前controller只支持did:memo，因此可以无需保存前缀
+		// currently, the controller only supports did:memo, so there is no need to save the prefix.
 		read, err := types.ParseMemoDID("did:memo:" + readIter.Event.MemoDid)
 		if err != nil {
 			return nil, err
@@ -151,14 +151,14 @@ func QueryAllRead(accountIns *proxy.IFileDid, did *types.MfileDID) ([]types.Memo
 		}
 	}
 
-	// 查询由controller免费授予的读取权限
+	// query the read permissions granted by the controller for free
 	freeReadIter, err := accountIns.FilterGrantRead(&bind.FilterOpts{}, []string{did.Identifier})
 	if err != nil {
 		return nil, err
 	}
 
 	for freeReadIter.Next() {
-		// 目前controller只支持did:memo，因此可以无需保存前缀
+		// currently, the controller only supports did:memo, so there is no need to save the prefix.
 		read, err := types.ParseMemoDID("did:memo:" + freeReadIter.Event.MemoDid)
 		if err != nil {
 			return nil, err
